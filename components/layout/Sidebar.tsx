@@ -19,6 +19,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/components/providers/workspace-provider";
 import { getWorkspaceDisplayMeta } from "@/lib/workspace-utils";
+import { signOut } from "@/app/auth/actions";
 
 const navItems = [
   { href: "/app/dashboard", icon: LayoutDashboard, label: "Dashboard" },
@@ -53,14 +54,11 @@ function SpideyMark() {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const supabase = createClient();
   const { user, workspace } = useWorkspace();
   const meta = getWorkspaceDisplayMeta(workspace, user);
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    router.refresh();
-    router.push("/sign-in");
+    await signOut();
   };
 
   return (

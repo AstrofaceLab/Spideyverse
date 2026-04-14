@@ -21,8 +21,51 @@ const agentFlow = [
 ];
 
 export default function AgentsPage() {
-  const managerAgent = mockAgents.find(a => a.type === "manager");
-  const otherAgents = mockAgents.filter(a => a.type !== "manager");
+  const { workspace } = useWorkspace();
+  const supabase = createClient();
+  const [agents, setAgents] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchAgentStatus() {
+      if (!workspace) return;
+      
+      // Fetch recent tasks for all agents to determine their status
+      const { data: tasks } = await supabase
+        .from('agent_tasks')
+        .select('*')
+        .eq('workspace_id', workspace.id)
+        .order('updated_at', { ascending: false });
+
+      const agentMap = [
+        { id: 'manager', name: 'Fleet Manager', type: 'manager', description: 'Orchestrates the agent-net workflow' },
+        { id: 'research', name: 'Researcher Agent', type: 'research', description: 'Crawl for leads and company data' },
+        { id: 'qualification', name: 'Qualification Agent', type: 'qualification', description: 'Analyze leads for campaign fit' },
+        { id: 'outreach', name: 'Outreach Agent', type: 'outreach', description: 'Draft personalized messages' },
+        { id: 'reporting', name: 'Reporting Agent', type: 'reporting', description: 'Generate campaign performance reports' },
+      ];
+
+      const realAgents = agentMap.map(a => {
+        const latestTask = tasks?.find(t => t.agent_name.toLowerCase().includes(a.type));
+        return {
+          ...a,
+          status: latestTask?.status === 'running' ? 'running' : 'idle',
+          lastActive: latestTask?.updated_at || 'Never',
+          tasksCompleted: tasks?.filter(t => t.agent_name.toLowerCase().includes(a.type) && t.status === 'completed').length || 0,
+          currentTask: latestTask?.status === 'running' ? `Processing ${latestTask.stage}` : 'Await assignment',
+        };
+      });
+
+      setAgents(realAgents);
+      setIsLoading(false);
+    }
+    fetchAgentStatus();
+    const interval = setInterval(fetchAgentStatus, 5000);
+    return () => clearInterval(interval);
+  }, [workspace]);
+
+  const managerAgent = agents.find(a => a.type === "manager");
+  const otherAgents = agents.filter(a => a.type !== "manager");
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -104,7 +147,7 @@ export default function AgentsPage() {
         <div className="sv-card p-5">
           <p className="sv-section-title mb-4">Agent Health Summary</p>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            {mockAgents.map(agent => {
+            {agents.map(agent => {
               const accent = agentAccents[agent.type];
               return (
                 <div key={agent.id} className="text-center">

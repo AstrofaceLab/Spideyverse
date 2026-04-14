@@ -18,9 +18,11 @@ import {
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/components/providers/workspace-provider";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 export default function CampaignsPage() {
+  const router = useRouter();
   const { workspace } = useWorkspace();
   const supabase = createClient();
   const [campaigns, setCampaigns] = useState<any[]>([]);
@@ -80,7 +82,11 @@ export default function CampaignsPage() {
             {/* List View */}
             <div className="grid grid-cols-1 gap-3">
               {campaigns.map((campaign) => (
-                <div key={campaign.id} className="sv-card p-5 flex items-center gap-4 group hover:border-[#3B82F6]/30 transition-all cursor-pointer" onClick={() => router.push(`/app/campaigns/${campaign.id}`)}>
+                <Link 
+                  key={campaign.id} 
+                  href={`/app/campaigns/${campaign.id}`}
+                  className="sv-card p-5 flex items-center gap-4 group hover:border-[#3B82F6]/30 transition-all cursor-pointer"
+                >
                   <div className="w-12 h-12 rounded-2xl bg-white/[0.03] border border-white/[0.05] flex items-center justify-center text-[#64748B] group-hover:text-[#3B82F6] group-hover:bg-[#3B82F6]/5 transition-all">
                     <Megaphone className="w-6 h-6" />
                   </div>
@@ -109,13 +115,11 @@ export default function CampaignsPage() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <Link href={`/app/campaigns/${campaign.id}`}>
-                      <button className="w-9 h-9 rounded-xl flex items-center justify-center text-[#64748B] hover:text-[#E5ECF6] hover:bg-white/[0.05] transition-all">
-                        <ArrowRight className="w-4 h-4" />
-                      </button>
-                    </Link>
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center text-[#64748B] group-hover:text-[#E5ECF6] group-hover:bg-white/[0.05] transition-all">
+                      <ArrowRight className="w-4 h-4" />
+                    </div>
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           </div>

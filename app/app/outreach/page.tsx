@@ -1,18 +1,41 @@
-"use client";
-
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { TopBar } from "@/components/layout/TopBar";
 import { DraftStatusBadge } from "@/components/app/StatusBadge";
-import { mockDrafts, mockCampaigns } from "@/lib/mock-data";
 import { timeAgo, cn } from "@/lib/utils";
 import type { OutreachDraft } from "@/lib/types";
-import { CheckCircle, XCircle, RotateCcw, Edit3, Bot, Save, X } from "lucide-react";
+import { CheckCircle, XCircle, RotateCcw, Edit3, Bot, Save, X, Loader2 } from "lucide-react";
+import { approveDraft, rejectDraft } from "@/lib/actions/workflow";
 
-function DraftEditor({ draft, onClose }: { draft: OutreachDraft; onClose: () => void }) {
+function DraftEditor({ draft, onClose, onUpdate }: { draft: OutreachDraft; onClose: () => void; onUpdate: () => void }) {
   const [editing, setEditing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [body, setBody] = useState(draft.body);
   const [subject, setSubject] = useState(draft.subject);
+
+  const handleApprove = async () => {
+    setIsProcessing(true);
+    try {
+      await approveDraft(draft.id);
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleReject = async () => {
+    setIsProcessing(true);
+    try {
+      await rejectDraft(draft.id);
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -114,18 +137,27 @@ function DraftEditor({ draft, onClose }: { draft: OutreachDraft; onClose: () => 
           </div>
         ) : (
           <>
-            <button className="w-full flex items-center justify-center gap-1.5 text-xs font-manrope font-medium bg-[#10B981]/10 border border-[#10B981]/20 text-[#10B981] hover:bg-[#10B981]/15 rounded-lg py-2.5 transition-all">
-              <CheckCircle className="w-3.5 h-3.5" /> Approve Draft
+            <button 
+              onClick={handleApprove}
+              disabled={isProcessing || draft.status === 'approved'}
+              className="w-full flex items-center justify-center gap-1.5 text-xs font-manrope font-medium bg-[#10B981]/10 border border-[#10B981]/20 text-[#10B981] hover:bg-[#10B981]/15 rounded-lg py-2.5 transition-all disabled:opacity-50"
+            >
+              {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />} 
+              {draft.status === 'approved' ? 'Approved' : 'Approve Draft'}
             </button>
             <div className="grid grid-cols-3 gap-2">
               <button onClick={() => setEditing(true)} className="sv-btn-outline text-xs flex items-center justify-center gap-1">
                 <Edit3 className="w-3 h-3" /> Edit
               </button>
-              <button className="sv-btn-outline text-xs flex items-center justify-center gap-1">
+              <button disabled className="sv-btn-outline text-xs flex items-center justify-center gap-1 opacity-50">
                 <RotateCcw className="w-3 h-3" /> Regen
               </button>
-              <button className="sv-btn-outline text-xs flex items-center justify-center gap-1 border-[#EF4444]/20 text-[#EF4444]/70 hover:text-[#EF4444]">
-                <XCircle className="w-3 h-3" /> Reject
+              <button 
+                onClick={handleReject}
+                disabled={isProcessing || draft.status === 'rejected'}
+                className="sv-btn-outline text-xs flex items-center justify-center gap-1 border-[#EF4444]/20 text-[#EF4444]/70 hover:text-[#EF4444] disabled:opacity-50"
+              >
+                {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <XCircle className="w-3 h-3" />} Reject
               </button>
             </div>
           </>
@@ -139,17 +171,32 @@ export default function OutreachPage() {
   const searchParams = useSearchParams();
   const campaignIdParam = searchParams.get("campaign");
 
-  const [selectedDraft, setSelectedDraft] = useState<OutreachDraft | null>(mockDrafts[0]);
+  const [drafts, setDrafts] = useState<OutreachDraft[]>([]);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [selectedDraft, setSelectedDraft] = useState<OutreachDraft | null>(null);
   const [filter, setFilter] = useState("all");
   const [campaignFilter, setCampaignFilter] = useState(campaignIdParam || "all");
+  const [isLoading, setIsLoading] = useState(true);
 
-  const filtered = useMemo(() => {
-    return mockDrafts.filter(d => {
-      const matchStatus = filter === "all" || d.status === filter;
-      const matchCampaign = campaignFilter === "all" || d.campaignId === campaignFilter;
-      return matchStatus && matchCampaign;
-    });
+  const fetchDrafts = async () => {
+    try {
+      const res = await fetch(`/api/outreach/drafts?campaign=${campaignFilter}&status=${filter}`);
+      const data = await res.json();
+      setDrafts(data);
+      setIsLoading(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchDrafts();
   }, [filter, campaignFilter]);
+
+  useEffect(() => {
+    // Fetch campaigns for filter
+    fetch('/api/campaigns').then(res => res.json()).then(data => setCampaigns(data)).catch(console.error);
+  }, []);
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -160,7 +207,7 @@ export default function OutreachPage() {
           subtitle="Review and approve AI-generated outreach drafts"
           actions={
             <span className="text-xs text-[#F59E0B] font-manrope font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/20 px-2.5 py-1 rounded-full">
-              {mockDrafts.filter(d => d.status === "pending_review").length} pending
+              {drafts.filter(d => d.status === "pending_review").length} pending
             </span>
           }
         />
@@ -187,7 +234,7 @@ export default function OutreachPage() {
               className="sv-input w-full py-1.5 pl-3 pr-8 text-[11px] appearance-none bg-white/[0.02] border-white/[0.05] text-[#64748B]"
             >
               <option value="all">All Campaigns</option>
-              {mockCampaigns.map(c => (
+              {campaigns.map(c => (
                 <option key={c.id} value={c.id}>{c.campaign_name}</option>
               ))}
             </select>
@@ -196,7 +243,11 @@ export default function OutreachPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {filtered.map(draft => (
+          {isLoading ? (
+            <div className="p-8 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-[#3B82F6]/30" /></div>
+          ) : drafts.length === 0 ? (
+            <div className="p-8 text-center text-[#64748B] text-xs">No drafts found.</div>
+          ) : drafts.map(draft => (
             <button key={draft.id} onClick={() => setSelectedDraft(draft)}
               className={cn(
                 "w-full text-left p-4 border-b border-white/[0.04] hover:bg-white/[0.02] transition-all",
@@ -216,7 +267,7 @@ export default function OutreachPage() {
       {/* Draft editor */}
       {selectedDraft && (
         <div className="flex-1 bg-[#0D1525] overflow-hidden flex flex-col">
-          <DraftEditor draft={selectedDraft} onClose={() => setSelectedDraft(null)} />
+          <DraftEditor draft={selectedDraft} onClose={() => setSelectedDraft(null)} onUpdate={fetchDrafts} />
         </div>
       )}
     </div>

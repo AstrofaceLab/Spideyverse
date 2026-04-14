@@ -1,4 +1,13 @@
-export default function AuthLayout({ children }: { children: React.ReactNode }) {
+import { redirect } from "next/navigation";
+import { getUser } from "@/lib/supabase/queries";
+
+export default async function AuthLayout({ children }: { children: React.ReactNode }) {
+  const user = await getUser();
+
+  if (user) {
+    return redirect("/app/dashboard");
+  }
+
   return (
     <div className="min-h-screen bg-[#0A0F1C] flex">
       {/* Left panel - decorative */}

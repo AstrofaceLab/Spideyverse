@@ -36,6 +36,8 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [orch, setOrch] = useState<any>(null);
+  const [isLaunching, setIsLaunching] = useState(false);
 
   useEffect(() => {
     async function fetchCampaign() {
@@ -51,6 +53,63 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     fetchCampaign();
   }, [params.id]);
 
+  useEffect(() => {
+    if (!campaign) return;
+    
+    async function fetchOrchestration() {
+      try {
+        const res = await fetch(`/api/campaigns/${params.id}/orchestration`);
+        const data = await res.json();
+        if (!data.error) setOrch(data);
+      } catch (err) {
+        console.error("Failed to fetch orchestration:", err);
+      }
+    }
+
+    fetchOrchestration();
+    // Poll for updates if running
+    let interval: any;
+    if (campaign.status === 'running') {
+      interval = setInterval(fetchOrchestration, 5000);
+    }
+    return () => clearInterval(interval);
+  }, [campaign?.id, campaign?.status]);
+
+  const handleLaunch = async () => {
+    if (!campaign) return;
+    setIsLaunching(true);
+    try {
+      // We import this from a client-side wrapper or use a direct fetch if we don't want to mess with 'use server' complexity in client comps
+      // For now, let's use a server action if we can, or just update status here if orchestrator is triggered by webhook/db trigger.
+      // But the user wants a real execution system.
+      
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: workspace } = await supabase
+        .from('workspaces')
+        .select('id')
+        .eq('user_id', user.id)
+        .single();
+
+      if (!workspace) return;
+
+      // Import the action dynamically or use a fetch to a trigger route
+      const { launchCampaignWorkflow } = await import('@/lib/actions/workflow');
+      const result = await launchCampaignWorkflow(campaign.id, workspace.id);
+      
+      if (result.success) {
+        setCampaign({ ...campaign, status: 'running' });
+      } else {
+        alert("Failed to launch workflow: " + result.error);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLaunching(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!campaign || !confirm("Are you sure you want to delete this campaign?")) return;
     setIsDeleting(true);
@@ -59,7 +118,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     else setIsDeleting(false);
   };
 
-  if (isLoading) {
+  if (isLoading || (!orch && campaign?.status !== 'draft')) {
     return (
       <div className="flex flex-col h-full bg-[#0A0F1C]">
         <TopBar title="Loading Campaign..." />
@@ -88,7 +147,8 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
     );
   }
 
-  const orch = getCampaignOrchestration(campaign);
+  // Fallback to mock orch only if requested or if it's a draft with no real orch yet
+  const displayOrch = orch || getCampaignOrchestration(campaign);
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#0A0F1C] custom-scrollbar">
@@ -113,8 +173,13 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
               </button>
             )}
             {campaign.status === 'draft' && (
-              <button className="sv-btn-primary flex items-center gap-1.5 text-[10px] py-1.5 h-auto bg-[#10B981] border-[#10B981]">
-                <Rocket className="w-3 h-3" /> Launch
+              <button 
+                onClick={handleLaunch}
+                disabled={isLaunching}
+                className="sv-btn-primary flex items-center gap-1.5 text-[10px] py-1.5 h-auto bg-[#10B981] border-[#10B981]"
+              >
+                {isLaunching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Rocket className="w-3 h-3" />} 
+                {isLaunching ? "Launching..." : "Launch"}
               </button>
             )}
           </div>
@@ -149,10 +214,10 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
               {/* KPI Strip */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-8">
                 {[
-                  { label: "Leads Sourced", value: orch.leadsFound, icon: Search, color: "text-[#3B82F6]" },
-                  { label: "Qualified", value: orch.qualifiedLeads, icon: AlertCircle, color: "text-[#10B981]" },
-                  { label: "Drafts Created", value: orch.draftsCreated, icon: Mail, color: "text-[#8B5CF6]" },
-                  { label: "Approvals", value: orch.approvalsCount, icon: CheckCircle2, color: "text-[#06B6D4]" },
+                  { label: "Leads Sourced", value: displayOrch.leadsFound, icon: Search, color: "text-[#3B82F6]" },
+                  { label: "Qualified", value: displayOrch.qualifiedLeads, icon: AlertCircle, color: "text-[#10B981]" },
+                  { label: "Drafts Created", value: displayOrch.draftsCreated, icon: Mail, color: "text-[#8B5CF6]" },
+                  { label: "Approvals", value: displayOrch.approvalsCount, icon: CheckCircle2, color: "text-[#06B6D4]" },
                 ].map((kpi) => (
                   <div key={kpi.label} className="flex flex-col items-center lg:items-end">
                     <p className="text-[10px] font-manrope font-bold text-[#64748B] uppercase tracking-widest mb-1">{kpi.label}</p>
@@ -167,7 +232,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
 
           {/* Stepper Integration */}
           <div className="px-6 py-6 border-t border-white/[0.05] bg-white/[0.01]">
-            <WorkflowStepper stageStatuses={orch.stageStatuses as any} currentStage={campaign.current_stage} />
+            <WorkflowStepper stageStatuses={displayOrch.stageStatuses as any} currentStage={campaign.current_stage} />
           </div>
         </div>
 
@@ -184,7 +249,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
                 <span className="text-[10px] font-manrope font-bold text-[#3B82F6] bg-[#3B82F6]/10 px-2 py-0.5 rounded uppercase">Live Feed</span>
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 -mr-2">
-                <ActivityTimeline events={orch.activity} />
+                <ActivityTimeline events={displayOrch.activity} />
               </div>
             </div>
 
@@ -221,7 +286,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {orch.agents.map((agent) => (
+              {displayOrch.agents.map((agent: any) => (
                 <AgentCard key={agent.id} agent={agent} compact />
               ))}
             </div>
@@ -230,7 +295,7 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[
                 { label: "View Leads", href: `/app/leads?campaign=${campaign.id}`, icon: Users, desc: "Browse sourced data" },
-                { label: "Outreach Review", href: `/app/outreach?campaign=${campaign.id}`, icon: Mail, desc: "Approve draft batches", count: orch.draftsCreated > orch.approvalsCount ? orch.draftsCreated - orch.approvalsCount : 0 },
+                { label: "Outreach Review", href: `/app/outreach?campaign=${campaign.id}`, icon: Mail, desc: "Approve draft batches", count: displayOrch.draftsCreated > displayOrch.approvalsCount ? displayOrch.draftsCreated - displayOrch.approvalsCount : 0 },
                 { label: "Campaign Report", href: `/app/reports?campaign=${campaign.id}`, icon: BarChart3, desc: "Export metrics" },
               ].map((action) => (
                 <Link key={action.label} href={action.href}>

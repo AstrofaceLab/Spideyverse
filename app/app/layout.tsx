@@ -21,7 +21,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <main className="flex-1 flex flex-col min-w-0 h-full relative overflow-hidden bg-[#0A0F1C]">
           {/* Main Content Area */}
           <div className="flex-1 overflow-hidden relative">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,_#3B82F60A_0%,_transparent_50%)]" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,_#3B82F60A_0%,_transparent_50%)] pointer-events-none" />
             {children}
           </div>
         </main>

@@ -162,16 +162,66 @@ function LeadDetailPanel({ lead, onClose }: { lead: Lead; onClose: () => void })
 }
 
 export default function LeadsPage() {
+  const { workspace } = useWorkspace();
   const searchParams = useSearchParams();
   const campaignIdParam = searchParams.get("campaign");
+  const supabase = createClient();
   
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [campaignFilter, setCampaignFilter] = useState(campaignIdParam || "all");
 
+  useEffect(() => {
+    async function fetchData() {
+      if (!workspace) return;
+      
+      const { data: campaignData } = await supabase
+        .from('campaigns')
+        .select('id, campaign_name')
+        .eq('workspace_id', workspace.id);
+      
+      if (campaignData) setCampaigns(campaignData);
+
+      let query = supabase
+        .from('leads')
+        .select('*')
+        .eq('workspace_id', workspace.id)
+        .order('created_at', { ascending: false });
+
+      const { data: leadsData } = await query;
+      
+      if (leadsData) {
+        setLeads(leadsData.map(l => ({
+          id: l.id,
+          companyName: l.company_name,
+          website: l.company_website,
+          contactName: l.contact_name,
+          contactTitle: l.contact_role,
+          email: l.email,
+          linkedIn: l.linkedin_url,
+          source: l.source,
+          summary: l.summary,
+          score: l.score || 0,
+          status: l.qualification_status,
+          campaignId: l.campaign_id,
+          campaignName: campaignData?.find(c => c.id === l.campaign_id)?.campaign_name || 'Unknown',
+          draftStatus: 'pending_review', // Fallback for now
+          createdAt: l.created_at,
+          tags: l.tags || [],
+          qualificationReasoning: l.reasoning || '',
+        })));
+      }
+      setIsLoading(false);
+    }
+    fetchData();
+  }, [workspace]);
+
   const filtered = useMemo(() => {
-    return mockLeads.filter(l => {
+    return leads.filter(l => {
       const matchStatus = statusFilter === "all" || l.status === statusFilter;
       const matchCampaign = campaignFilter === "all" || l.campaignId === campaignFilter;
       const matchSearch = l.companyName.toLowerCase().includes(search.toLowerCase()) ||
@@ -179,7 +229,7 @@ export default function LeadsPage() {
         (l.contactName || "").toLowerCase().includes(search.toLowerCase());
       return matchStatus && matchCampaign && matchSearch;
     });
-  }, [statusFilter, campaignFilter, search]);
+  }, [leads, statusFilter, campaignFilter, search]);
 
   const campaignName = useMemo(() => {
     if (campaignFilter === "all") return "all campaigns";
@@ -216,7 +266,7 @@ export default function LeadsPage() {
                 className="sv-input py-1.5 pl-3 pr-8 text-xs appearance-none bg-white/[0.03] border-white/[0.06] text-[#94A3B8]"
               >
                 <option value="all">All Campaigns</option>
-                {mockCampaigns.map(c => (
+                {campaigns.map(c => (
                   <option key={c.id} value={c.id}>{c.campaign_name}</option>
                 ))}
               </select>
