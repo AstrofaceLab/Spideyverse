@@ -16,8 +16,9 @@ export async function launchCampaignWorkflow(campaignId: string, workspaceId: st
     console.log(`[Action] Launching workflow for campaign: ${campaignId}`);
     
     // 2. Start the orchestrator 
-    // We await the FIRST step (Research) to ensure the execution pipe is established
-    await workflowOrchestrator.startWorkflow(campaignId, workspaceId);
+    // We do NOT await the full workflow here to avoid server action timeouts.
+    // The orchestrator handles its own state updates in the DB, which the UI polls for.
+    void workflowOrchestrator.startWorkflow(campaignId, workspaceId);
 
     revalidatePath(`/app/campaigns/${campaignId}`);
     return { success: true };

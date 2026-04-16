@@ -26,8 +26,11 @@ export class WorkflowOrchestrator {
       .select()
       .single();
 
-    if (runError) throw runError;
-    await this.logActivity(workspaceId, campaignId, run.id, 'manager', 'Workflow initialized');
+    if (runError) {
+      console.error('[Orchestrator] Failed to initialize run:', runError);
+      throw runError;
+    }
+    await this.logActivity(workspaceId, campaignId, run.id, 'manager', 'Workflow initialized. Starting AI-powered lead discovery...');
 
     try {
       // Fetch Campaign Context
@@ -35,87 +38,63 @@ export class WorkflowOrchestrator {
       if (!campaign) throw new Error('Campaign not found');
 
       // --- STAGE 1: RESEARCH ---
-      console.log("[Orchestrator] -> Stage 1: Research");
-      await this.logActivity(workspaceId, campaignId, run.id, 'research', 'Research Agent is sourcing leads from Serper...');
+      console.log("[Orchestrator] -> Stage 1: Research (Serper + AI Extraction)");
+      await this.logActivity(workspaceId, campaignId, run.id, 'research', 'Generating search queries and scanning the web for prospects...');
       await this.updateTask(run.id, campaignId, workspaceId, 'Research Agent', 'research', 'running');
       
       const researchResult = await this.researchAgent.run({
-        campaignId, workspaceId,
-        niche: campaign.niche, businessType: campaign.business_type,
-        targetRegion: campaign.target_region, idealLeadProfile: campaign.ideal_lead_profile,
+        campaignId, 
+        workspaceId,
+        niche: campaign.niche, 
+        businessType: campaign.business_type,
+        targetRegion: campaign.target_region, 
+        idealLeadProfile: campaign.ideal_lead_profile,
+        offerContext: campaign.offer_context
       });
 
-      await new Promise(r => setTimeout(r, 2000)); // Buffer for UI
       await this.updateTask(run.id, campaignId, workspaceId, 'Research Agent', 'research', 'completed', researchResult);
-      await this.logActivity(workspaceId, campaignId, run.id, 'research', `Found ${researchResult.leadsFound} real prospects via LinkedIn.`);
+      await this.logActivity(workspaceId, campaignId, run.id, 'research', `Discovery complete. Found ${researchResult.leadsFound} leads. Extraction rate: ${researchResult.extractionSuccessRate.toFixed(1)}%.`);
 
       // --- STAGE 2: QUALIFICATION ---
       console.log("[Orchestrator] -> Stage 2: Qualification");
       await this.updateRunStage(run.id, 'qualification');
       await this.updateTask(run.id, campaignId, workspaceId, 'Qualification Agent', 'qualification', 'running');
-      await this.logActivity(workspaceId, campaignId, run.id, 'qualification', 'Analyzing prospect profiles for ICP fit...');
+      await this.logActivity(workspaceId, campaignId, run.id, 'qualification', 'Applying strict ICP scoring rubrics to filtered leads...');
       
-      let qualResult;
-      try {
-        qualResult = await this.qualificationAgent.run({
-          campaignId, workspaceId, campaignContext: campaign,
-        });
-      } catch (e) {
-        console.log("[Orchestrator] Fallback to Mock Qualification");
-        qualResult = { qualified: researchResult.leadsFound, disqualified: 0 };
-        await this.supabase.from('leads').update({ qualification_status: 'qualified', score: 92 }).eq('campaign_id', campaignId);
-      }
+      const qualResult = await this.qualificationAgent.run({
+        campaignId, workspaceId, campaignContext: campaign,
+      });
 
-      await new Promise(r => setTimeout(r, 2000)); // Buffer for UI
       await this.updateTask(run.id, campaignId, workspaceId, 'Qualification Agent', 'qualification', 'completed', qualResult);
-      await this.logActivity(workspaceId, campaignId, run.id, 'qualification', `Successfully qualified ${qualResult.qualified} leads.`);
+      await this.logActivity(workspaceId, campaignId, run.id, 'qualification', `Qualified ${qualResult.qualified} leads. ${qualResult.disqualified} filtered out.`);
 
       // --- STAGE 3: OUTREACH ---
       console.log("[Orchestrator] -> Stage 3: Outreach");
       await this.updateRunStage(run.id, 'outreach');
       await this.updateTask(run.id, campaignId, workspaceId, 'Outreach Agent', 'outreach', 'running');
-      await this.logActivity(workspaceId, campaignId, run.id, 'outreach', 'Generating personalized messaging drafts...');
+      await this.logActivity(workspaceId, campaignId, run.id, 'outreach', 'Writing personalized, high-intent messages for qualified leads...');
 
-      let outreachResult;
-      try {
-        outreachResult = await this.outreachAgent.run({
-          campaignId, workspaceId, campaignContext: campaign,
-        });
-      } catch (e) {
-        console.log("[Orchestrator] Fallback to Mock Outreach");
-        outreachResult = { draftsCreated: qualResult.qualified };
-        if (researchResult.firstLeadId) {
-          await this.supabase.from('outreach_drafts').insert({
-            campaign_id: campaignId, workspace_id: workspaceId, lead_id: researchResult.firstLeadId,
-            subject_line: 'Quick question regarding ' + campaign.niche,
-            message_body: 'Hi, I saw your profile on LinkedIn and wanted to connect...',
-            draft_status: 'pending_review'
-          });
-        }
-      }
+      const outreachResult = await this.outreachAgent.run({
+        campaignId, workspaceId, campaignContext: campaign,
+      });
 
-      await new Promise(r => setTimeout(r, 2000)); // Buffer for UI
       await this.updateTask(run.id, campaignId, workspaceId, 'Outreach Agent', 'outreach', 'completed', outreachResult);
-      await this.logActivity(workspaceId, campaignId, run.id, 'outreach', `Created ${outreachResult.draftsCreated} personalized drafts.`);
+      await this.logActivity(workspaceId, campaignId, run.id, 'outreach', `Generated ${outreachResult.draftsCreated} personalized drafts ready for review.`);
 
       // --- STAGE 4: REPORTING ---
       console.log("[Orchestrator] -> Stage 4: Reporting");
       await this.updateRunStage(run.id, 'reporting');
       await this.updateTask(run.id, campaignId, workspaceId, 'Reporting Agent', 'reporting', 'running');
       
-      try {
-        await this.reportingAgent.run({ workflowRunId: run.id, campaignId, workspaceId });
-      } catch (e) {
-        console.log("[Orchestrator] Fallback to Mock Reporting");
-      }
+      const reportResult = await this.reportingAgent.run({ workflowRunId: run.id, campaignId, workspaceId });
 
-      await new Promise(r => setTimeout(r, 2000)); // Buffer for UI
-      await this.updateTask(run.id, campaignId, workspaceId, 'Reporting Agent', 'reporting', 'completed', { success: true });
-      await this.logActivity(workspaceId, campaignId, run.id, 'reporting', 'Campaign analysis report is now ready.');
+      await this.updateTask(run.id, campaignId, workspaceId, 'Reporting Agent', 'reporting', 'completed', reportResult);
+      await this.logActivity(workspaceId, campaignId, run.id, 'reporting', `Campaign report generated. Lead Quality: ${reportResult.metrics.avgScore}/100.`);
 
       // --- FINALIZE ---
       await this.supabase.from('workflow_runs').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', run.id);
       await this.supabase.from('campaigns').update({ status: 'needs_review', current_stage: 'outreach' }).eq('id', campaignId);
+      await this.logActivity(workspaceId, campaignId, run.id, 'manager', 'Workflow completed successfully.', 'success');
 
     } catch (error: any) {
       console.error('Workflow Execution Error:', error);
@@ -141,16 +120,15 @@ export class WorkflowOrchestrator {
   }
 
   private async updateTask(runId: string, campaignId: string, workspaceId: string, agent: string, stage: string, status: string, output?: any) {
-    // Check if task exists, otherwise insert
     const { data: existing } = await this.supabase
       .from('agent_tasks')
       .select('id')
       .eq('workflow_run_id', runId)
       .eq('stage', stage)
-      .single();
+      .maybeSingle();
 
     if (existing) {
-      await this.supabase
+      const { error: updateError } = await this.supabase
         .from('agent_tasks')
         .update({ 
           status, 
@@ -159,8 +137,10 @@ export class WorkflowOrchestrator {
           updated_at: new Date().toISOString() 
         })
         .eq('id', existing.id);
+        
+      if (updateError) console.error(`[Orchestrator] Error updating task ${stage}:`, updateError);
     } else {
-      await this.supabase
+      const { error: insertError } = await this.supabase
         .from('agent_tasks')
         .insert({
           workflow_run_id: runId,
@@ -173,11 +153,13 @@ export class WorkflowOrchestrator {
           started_at: status === 'running' ? new Date().toISOString() : null,
           output_json: output,
         });
+
+      if (insertError) console.error(`[Orchestrator] Error inserting task ${stage}:`, insertError);
     }
   }
 
   private async logActivity(workspaceId: string, campaignId: string, runId: string, type: string, message: string, eventType: string = 'info') {
-    await this.supabase
+    const { error } = await this.supabase
       .from('activity_logs')
       .insert({
         workspace_id: workspaceId,
@@ -186,7 +168,10 @@ export class WorkflowOrchestrator {
         event_type: eventType,
         message,
       });
+      
+    if (error) console.error('[Orchestrator] Error logging activity:', error);
   }
 }
 
 export const workflowOrchestrator = new WorkflowOrchestrator();
+

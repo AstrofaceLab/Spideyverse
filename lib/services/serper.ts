@@ -2,10 +2,13 @@
  * Serper.dev Google Search API Service for Lead Discovery
  */
 
-interface SerperResult {
+export interface SerperResult {
   title: string;
   link: string;
   snippet: string;
+  position?: number;
+  date?: string;
+  source?: string;
 }
 
 export class SerperService {
@@ -16,7 +19,7 @@ export class SerperService {
     this.apiKey = apiKey;
   }
 
-  async searchLeads(query: string) {
+  async search(query: string, num: number = 10): Promise<SerperResult[]> {
     if (!this.apiKey) {
       throw new Error('SERPER_API_KEY is not set');
     }
@@ -30,7 +33,7 @@ export class SerperService {
         },
         body: JSON.stringify({
           q: query,
-          num: 10,
+          num: num,
         }),
       });
 
@@ -45,13 +48,7 @@ export class SerperService {
       throw error;
     }
   }
-
-  /**
-   * Constructs a LinkedIn-focused search query for leads
-   */
-  buildLeadQuery(niche: string, targetRegion: string, titles: string): string {
-    return `site:linkedin.com/in "${niche}" "${targetRegion}" "${titles}"`;
-  }
 }
 
 export const serperService = new SerperService(process.env.SERPER_API_KEY || '');
+

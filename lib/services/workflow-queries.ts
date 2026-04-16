@@ -39,7 +39,7 @@ export async function getRealCampaignOrchestration(campaignId: string) {
     .from('leads')
     .select('*', { count: 'exact', head: true })
     .eq('campaign_id', campaignId)
-    .eq('qualification_status', 'qualified');
+    .in('qualification_status', ['qualified', 'pending_review']);
 
   const { count: draftsCreated } = await supabase
     .from('outreach_drafts')
@@ -71,19 +71,23 @@ export async function getRealCampaignOrchestration(campaignId: string) {
     { id: '1', type: 'research', name: 'Research Agent', role: 'Data Sourcing', status: (stageStatuses.research as any) || 'idle', tasksCompleted: leadsFound || 0, lastActive: new Date().toISOString(), metrics: [] },
     { id: '2', type: 'qualification', name: 'Qualification Agent', role: 'ICP Matching', status: (stageStatuses.qualification as any) || 'idle', tasksCompleted: qualifiedLeads || 0, lastActive: new Date().toISOString(), metrics: [] },
     { id: '3', type: 'outreach', name: 'Outreach Agent', role: 'Draft Generation', status: (stageStatuses.outreach as any) || 'idle', tasksCompleted: draftsCreated || 0, lastActive: new Date().toISOString(), metrics: [] },
-    { id: '4', type: 'reporting', name: 'Reporting Agent', role: 'Insights', status: (stageStatuses.reporting as any) || 'idle', tasksCompleted: 0, lastActive: new Date().toISOString(), metrics: [] },
+    { id: '4', type: 'reporting', name: 'Reporting Agent', role: 'Insights', status: (stageStatuses.reporting as any) || 'idle', tasksCompleted: 1, lastActive: new Date().toISOString(), metrics: [] },
   ];
 
   // Map activity
   const activity: ActivityEvent[] = (logs || []).map(l => ({
     id: l.id,
-    agentType: (l.metadata_json?.agent_type as any) || 'manager',
-    agentName: l.metadata_json?.agent_name || 'System',
-    event: l.event_type,
+    agentType: (l.agent_name?.toLowerCase().includes('research') ? 'research' : 
+                l.agent_name?.toLowerCase().includes('qualification') ? 'qualification' :
+                l.agent_name?.toLowerCase().includes('outreach') ? 'outreach' :
+                l.agent_name?.toLowerCase().includes('reporting') ? 'reporting' : 'manager') as any,
+    agentName: l.agent_name || 'System',
+    event: l.event_type || 'info',
     detail: l.message,
     timestamp: l.created_at,
     type: l.event_type === 'error' ? 'error' : l.event_type === 'success' ? 'success' : 'info'
   }));
+
 
   return {
     stageStatuses,

@@ -1,5 +1,7 @@
 import { serperService } from '../serper';
 import { createAdminClient } from '../../supabase/admin';
+import { queryGenerator } from '../query-generator';
+import { dataExtractor } from '../extractor';
 
 export interface ResearchInput {
   campaignId: string;
@@ -8,56 +10,118 @@ export interface ResearchInput {
   businessType: string;
   targetRegion: string;
   idealLeadProfile: string;
+  offerContext?: string;
 }
 
 export class ResearchAgent {
-  async run(input: ResearchInput) {
-    console.log(`[ResearchAgent] Starting for campaign ${input.campaignId} (using Serper)`);
-    
-    // 1. Build search query
-    const query = serperService.buildLeadQuery(
-      input.niche,
-      input.targetRegion,
-      input.idealLeadProfile
-    );
+  private supabase = createAdminClient();
 
-    // 2. Call Serper
-    const organicResults = await serperService.searchLeads(query);
+  async run(input: ResearchInput) {
+    console.log(`[ResearchAgent] Starting for campaign ${input.campaignId}`);
     
-    // 3. Normalize and persist leads
-    const supabase = createAdminClient();
-    const leads = organicResults.map((result: any) => {
-      // Basic extraction from snippet/title
-      // Serper results for LinkedIn usually look like "Name - Title - Company | LinkedIn"
-      const titleParts = result.title.split(' - ');
-      const name = titleParts[0] || 'Prospect';
-      const role = titleParts[1] || input.idealLeadProfile;
-      
-      return {
-        campaign_id: input.campaignId,
-        workspace_id: input.workspaceId,
-        company_name: result.snippet.split(' at ')[1]?.split(' ')[0] || 'Company',
-        company_website: result.link, // using LinkedIn as proxy
-        contact_name: name,
-        contact_role: role,
-        email: 'prospect@example.com', // Serper doesn't provide email, Qualification/Outreach will handle this
-        linkedin_url: result.link,
-        source: 'Serper LinkedIn Search',
-        source_provider: 'serper',
-        summary: result.snippet,
-        qualification_status: 'new',
-      };
+    // 1. Generate high-intent queries
+    const queries = await queryGenerator.generateQueries({
+      niche: input.niche,
+      target_region: input.targetRegion,
+      ideal_lead_profile: input.idealLeadProfile,
+      offer: input.offerContext
     });
 
-    if (leads.length > 0) {
-      const { error } = await supabase.from('leads').insert(leads);
-      if (error) throw error;
+    const allLeads: any[] = [];
+    const processedUrls = new Set<string>();
+
+    // 2. Execute searches (Batch processing)
+    for (const query of queries) {
+      try {
+        const results = await serperService.search(query, 10);
+        
+        for (const result of results) {
+          if (processedUrls.has(result.link)) continue;
+          processedUrls.add(result.link);
+
+          // 3. Extract data from each result
+          // We limit the number of leads per run to ~20-50 as requested
+          if (allLeads.length >= 30) break; 
+
+          const extractedLead = await dataExtractor.processUrl(result.link);
+          
+          if (extractedLead) {
+            allLeads.push({
+              campaign_id: input.campaignId,
+              workspace_id: input.workspaceId,
+              company_name: extractedLead.company_name || result.title.split('-')[0].trim(),
+              company_website: extractedLead.website || result.link,
+              contact_name: extractedLead.contact_name,
+              contact_role: extractedLead.contact_role,
+              email: extractedLead.email,
+              source: 'serper',
+              source_url: result.link,
+              summary: extractedLead.summary || result.snippet,
+              qualification_status: 'new',
+              tags: extractedLead.industry_hint ? [extractedLead.industry_hint] : [],
+              score: null,
+            });
+          } else {
+            // Fallback to basic info if extraction failed but we have a result
+            allLeads.push({
+              campaign_id: input.campaignId,
+              workspace_id: input.workspaceId,
+              company_name: result.title.split('-')[0].trim(),
+              company_website: result.link,
+              source: 'serper',
+              source_url: result.link,
+              summary: result.snippet,
+              qualification_status: 'new',
+              score: null,
+            });
+          }
+        }
+        if (allLeads.length >= 30) break;
+      } catch (err) {
+        console.error(`Search failed for query "${query}":`, err);
+      }
     }
 
+    // 4. Deduplication by email or (company_name + website)
+    const uniqueLeads = this.deduplicateLeads(allLeads);
+
+    // 5. Persist to DB
+    if (uniqueLeads.length > 0) {
+      const { error } = await this.supabase.from('leads').insert(uniqueLeads);
+      if (error) {
+        console.error('[ResearchAgent] Error inserting leads:', error);
+        throw new Error(`Failed to save discovered leads: ${error.message}`);
+      }
+    }
+
+    const emailCount = uniqueLeads.filter(l => !!l.email).length;
+
     return {
-      leadsFound: leads.length,
-      firstLeadId: leads.length > 0 ? (await supabase.from('leads').select('id').eq('campaign_id', input.campaignId).limit(1).single() as any).data?.id : null,
+      leadsFound: uniqueLeads.length,
+      emailCount,
+      extractionSuccessRate: uniqueLeads.length > 0 ? (emailCount / uniqueLeads.length) * 100 : 0,
       source: 'serper',
     };
   }
+
+  private deduplicateLeads(leads: any[]): any[] {
+    const seenEmails = new Set();
+    const seenEntities = new Set();
+    const result: any[] = [];
+
+    for (const lead of leads) {
+      if (lead.email) {
+        if (seenEmails.has(lead.email.toLowerCase())) continue;
+        seenEmails.add(lead.email.toLowerCase());
+      } else {
+        const entityKey = `${lead.company_name?.toLowerCase()}-${lead.company_website?.toLowerCase()}`;
+        if (seenEntities.has(entityKey)) continue;
+        seenEntities.add(entityKey);
+      }
+      result.push(lead);
+    }
+
+    return result;
+  }
 }
+
