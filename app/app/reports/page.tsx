@@ -3,13 +3,13 @@
 import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { TopBar } from "@/components/layout/TopBar";
-import { mockReports, mockCampaigns } from "@/lib/mock-data";
 import { formatDate, cn } from "@/lib/utils";
 import type { Report } from "@/lib/types";
-import { BarChart3, TrendingUp, AlertTriangle, Lightbulb, X, Download } from "lucide-react";
+import { BarChart3, TrendingUp, AlertTriangle, Lightbulb, X, Download, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 function ReportDetailView({ report, onClose }: { report: Report; onClose: () => void }) {
-  const qualRate = ((report.qualifiedLeads / report.leadsFound) * 100).toFixed(0);
+  const qualRate = report.leadsFound > 0 ? ((report.qualifiedLeads / report.leadsFound) * 100).toFixed(0) : 0;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -19,7 +19,7 @@ function ReportDetailView({ report, onClose }: { report: Report; onClose: () => 
           <p className="text-xs text-[#64748B] mt-0.5">Generated {formatDate(report.generatedAt)}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="sv-btn-outline text-xs flex items-center gap-1.5">
+          <button className="sv-btn-outline text-xs flex items-center gap-1.5 opacity-50 cursor-not-allowed">
             <Download className="w-3.5 h-3.5" /> Export
           </button>
           <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center text-[#64748B] hover:text-[#94A3B8] hover:bg-white/[0.05] transition-all">
@@ -36,8 +36,8 @@ function ReportDetailView({ report, onClose }: { report: Report; onClose: () => 
             { label: "Qualified Leads", value: report.qualifiedLeads, color: "#10B981" },
             { label: "Qual. Rate", value: `${qualRate}%`, color: "#10B981" },
             { label: "Drafts Generated", value: report.draftsGenerated, color: "#8B5CF6" },
-            { label: "Pending Approvals", value: report.pendingApprovals, color: "#F59E0B" },
-            { label: "Workflow Time", value: report.workflowTime, color: "#06B6D4" },
+            { label: "Pending Approvals", value: report.pendingApprovals || 0, color: "#F59E0B" },
+            { label: "Workflow Time", value: report.workflowTime || 'N/A', color: "#06B6D4" },
           ].map(m => (
             <div key={m.label} className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.05] text-center">
               <p className="font-poppins text-xl font-semibold" style={{ color: m.color }}>{m.value}</p>
@@ -56,7 +56,7 @@ function ReportDetailView({ report, onClose }: { report: Report; onClose: () => 
         </div>
 
         {/* Bottlenecks */}
-        {report.bottlenecks.length > 0 && (
+        {report.bottlenecks && report.bottlenecks.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-3">
               <AlertTriangle className="w-3.5 h-3.5 text-[#F59E0B]" />
@@ -76,7 +76,7 @@ function ReportDetailView({ report, onClose }: { report: Report; onClose: () => 
         )}
 
         {/* Recommendations */}
-        {report.recommendations.length > 0 && (
+        {report.recommendations && report.recommendations.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Lightbulb className="w-3.5 h-3.5 text-[#10B981]" />
@@ -99,28 +99,65 @@ function ReportDetailView({ report, onClose }: { report: Report; onClose: () => 
   );
 }
 
+import { PageErrorBoundary } from "@/components/app/PageErrorBoundary";
+
 export default function ReportsPage() {
+  return (
+    <PageErrorBoundary>
+      <ReportsContent />
+    </PageErrorBoundary>
+  );
+}
+
+function ReportsContent() {
   const searchParams = useSearchParams();
   const campaignIdParam = searchParams.get("campaign");
 
+  const [reports, setReports] = useState<Report[]>([]);
+  const [campaigns, setCampaigns] = useState<any[]>([]);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
-  const [campaignFilter, setCampaignFilter] = useState("all");
+  const [campaignFilter, setCampaignFilter] = useState(campaignIdParam || "all");
+  const [isLoading, setIsLoading] = useState(true);
+
+  const fetchData = async () => {
+    setIsLoading(true);
+    try {
+      const [reportsRes, campaignsRes] = await Promise.all([
+        fetch(`/api/reports?campaign=${campaignFilter}`),
+        fetch('/api/campaigns')
+      ]);
+
+      const [reportsData, campaignsData] = await Promise.all([
+        reportsRes.json(),
+        campaignsRes.json()
+      ]);
+
+      if (reportsData.error) throw new Error(reportsData.error);
+      if (campaignsData.error) throw new Error(campaignsData.error);
+
+      setReports(reportsData);
+      setCampaigns(campaignsData);
+
+      // Handle initial selection
+      if (campaignIdParam) {
+        const report = reportsData.find((r: Report) => r.campaignId === campaignIdParam);
+        if (report) setSelectedReport(report);
+      } else if (reportsData.length > 0 && !selectedReport) {
+        setSelectedReport(reportsData[0]);
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to load report data.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (campaignIdParam) {
-      const report = mockReports.find(r => r.campaignId === campaignIdParam);
-      if (report) {
-        setSelectedReport(report);
-        setCampaignFilter(campaignIdParam);
-      }
-    } else if (mockReports.length > 0) {
-      setSelectedReport(mockReports[0]);
-    }
-  }, [campaignIdParam]);
-
-  const filteredReports = useMemo(() => {
-    return mockReports.filter(r => campaignFilter === "all" || r.campaignId === campaignFilter);
+    fetchData();
   }, [campaignFilter]);
+
+  const filteredReports = reports; // Already filtered by API
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -136,7 +173,7 @@ export default function ReportsPage() {
               className="sv-input w-full py-1.5 pl-3 pr-8 text-[11px] appearance-none bg-white/[0.02] border-white/[0.05] text-[#64748B]"
             >
               <option value="all">All Campaigns</option>
-              {mockCampaigns.map(c => (
+              {campaigns.map(c => (
                 <option key={c.id} value={c.id}>{c.campaign_name}</option>
               ))}
             </select>
@@ -145,7 +182,9 @@ export default function ReportsPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {filteredReports.length === 0 ? (
+          {isLoading ? (
+            <div className="p-8 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-[#3B82F6]/30" /></div>
+          ) : filteredReports.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center p-6">
               <BarChart3 className="w-8 h-8 text-[#4B5563] mb-3" />
               <p className="text-sm font-manrope text-[#64748B]">No reports yet</p>
@@ -153,7 +192,7 @@ export default function ReportsPage() {
             </div>
           ) : (
             filteredReports.map(report => {
-              const qualRate = ((report.qualifiedLeads / report.leadsFound) * 100).toFixed(0);
+              const qualRate = report.leadsFound > 0 ? ((report.qualifiedLeads / report.leadsFound) * 100).toFixed(0) : 0;
               return (
                 <button key={report.id}
                   onClick={() => setSelectedReport(report)}

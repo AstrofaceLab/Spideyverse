@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   title: "SPIDEYVERSE – Agent-Net",
@@ -23,6 +24,19 @@ export default function RootLayout({
       </head>
       <body className="bg-[#0A0F1C] text-[#E5ECF6] font-inter antialiased min-h-screen">
         {children}
+        <Toaster
+          position="bottom-right"
+          theme="dark"
+          toastOptions={{
+            style: {
+              background: "#121A2B",
+              border: "1px solid rgba(255,255,255,0.08)",
+              color: "#E5ECF6",
+              fontFamily: "Manrope, sans-serif",
+              fontSize: "13px",
+            },
+          }}
+        />
       </body>
     </html>
   );

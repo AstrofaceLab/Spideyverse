@@ -66,14 +66,64 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
       }
     }
 
+    // Initial fetch
     fetchOrchestration();
-    // Poll for updates if running
-    let interval: any;
-    if (campaign.status === 'running') {
-      interval = setInterval(fetchOrchestration, 5000);
-    }
-    return () => clearInterval(interval);
-  }, [campaign?.id, campaign?.status]);
+
+    // 🚀 Stage 1: Real-time Orchestration Channel
+    const channel = supabase
+      .channel(`campaign-updates-${params.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'workflow_runs', filter: `campaign_id=eq.${params.id}` },
+        (payload) => {
+          console.log('[Realtime] Workflow run changed:', payload);
+          // If status changed, update the campaign state too
+          if (payload.new && (payload.new as any).status !== campaign.status) {
+            setCampaign(prev => prev ? ({ ...prev, status: (payload.new as any).status, current_stage: (payload.new as any).current_stage }) : null);
+          }
+          fetchOrchestration();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'agent_tasks', filter: `campaign_id=eq.${params.id}` },
+        () => {
+          console.log('[Realtime] Agent task updated');
+          fetchOrchestration();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'activity_logs', filter: `campaign_id=eq.${params.id}` },
+        () => {
+          console.log('[Realtime] New activity log received');
+          fetchOrchestration();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'leads', filter: `campaign_id=eq.${params.id}` },
+        () => {
+          console.log('[Realtime] Leads table updated');
+          fetchOrchestration();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'outreach_drafts', filter: `campaign_id=eq.${params.id}` },
+        () => {
+          console.log('[Realtime] Outreach drafts updated');
+          fetchOrchestration();
+        }
+      )
+      .subscribe((status) => {
+        console.log(`[Realtime] Subscription status: ${status}`);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [campaign?.id, params.id]);
 
   const handleLaunch = async () => {
     if (!campaign) return;

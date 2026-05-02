@@ -82,6 +82,14 @@ export function CampaignForm() {
       if (error) throw error;
 
       if (data) {
+        if (status === 'running') {
+          try {
+            const { launchCampaignWorkflow } = await import('@/lib/actions/workflow');
+            await launchCampaignWorkflow(data.id, workspace.id);
+          } catch (err) {
+            console.error("Failed to trigger workflow from form:", err);
+          }
+        }
         router.push(`/app/campaigns/${data.id}`);
       }
     } catch (error) {

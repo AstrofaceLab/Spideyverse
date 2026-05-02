@@ -20,8 +20,18 @@ import { createClient } from "@/lib/supabase/client";
 import { useWorkspace } from "@/components/providers/workspace-provider";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { PageErrorBoundary } from "@/components/app/PageErrorBoundary";
+import { SkeletonCard } from "@/components/app/Skeletons";
 
 export default function CampaignsPage() {
+  return (
+    <PageErrorBoundary>
+      <CampaignsContent />
+    </PageErrorBoundary>
+  );
+}
+
+function CampaignsContent() {
   const router = useRouter();
   const { workspace } = useWorkspace();
   const supabase = createClient();
@@ -29,6 +39,8 @@ export default function CampaignsPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (!workspace) return;
+
     async function fetchCampaigns() {
       if (!workspace) return;
       const { data, error } = await supabase
@@ -40,7 +52,25 @@ export default function CampaignsPage() {
       if (data) setCampaigns(data);
       setIsLoading(false);
     }
+
     fetchCampaigns();
+
+    // 🚀 Stage 1: Real-time Campaign Updates
+    const channel = supabase
+      .channel(`campaigns-list-updates-${workspace.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'campaigns', filter: `workspace_id=eq.${workspace.id}` },
+        () => {
+          console.log('[Realtime] Campaigns updated in list view');
+          fetchCampaigns();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [workspace]);
 
   return (
@@ -60,9 +90,10 @@ export default function CampaignsPage() {
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-64 text-[#64748B]">
-            <Loader2 className="w-8 h-8 animate-spin mb-3 opacity-20" />
-            <p className="text-sm font-manrope">Synchronizing Agent-Net...</p>
+          <div className="grid grid-cols-1 gap-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
           </div>
         ) : campaigns.length === 0 ? (
           <PersonalizedEmptyState 

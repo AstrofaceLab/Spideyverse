@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { TopBar } from "@/components/layout/TopBar";
-import { mockWorkspace } from "@/lib/mock-data";
-import { Save, User, Building, Zap, Bell, Shield } from "lucide-react";
+import { Save, User, Building, Zap, Bell, Shield, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { createClient } from "@/lib/supabase/client";
 
 const tabs = [
   { id: "workspace", label: "Workspace", icon: Building },
@@ -36,21 +37,98 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
+import { PageErrorBoundary } from "@/components/app/PageErrorBoundary";
+
 export default function SettingsPage() {
+  return (
+    <PageErrorBoundary>
+      <SettingsContent />
+    </PageErrorBoundary>
+  );
+}
+
+function SettingsContent() {
   const [activeTab, setActiveTab] = useState("workspace");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [form, setForm] = useState({
-    workspaceName: mockWorkspace.name,
-    businessDescription: mockWorkspace.businessDescription,
-    businessType: mockWorkspace.businessType,
-    defaultOffer: mockWorkspace.defaultOffer,
-    defaultRegion: mockWorkspace.defaultRegion,
-    outreachTone: mockWorkspace.outreachTone,
-    name: "Jordan Pierce",
-    email: "jordan@meridian.co",
+    workspaceName: "",
+    businessDescription: "",
+    businessType: "Agency",
+    defaultOffer: "",
+    defaultRegion: "",
+    outreachTone: "Professional & Direct",
+    name: "",
+    email: "",
+    plan: "Free",
   });
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      const supabase = createClient();
+      try {
+        const [wsRes, { data: { user } }] = await Promise.all([
+          fetch('/api/workspace'),
+          supabase.auth.getUser()
+        ]);
+
+        const wsData = await wsRes.json();
+        if (wsData.error) throw new Error(wsData.error);
+
+        setForm({
+          workspaceName: wsData.name || "",
+          businessDescription: wsData.businessDescription || "",
+          businessType: wsData.businessType || "Agency",
+          defaultOffer: wsData.defaultOffer || "",
+          defaultRegion: wsData.defaultRegion || "",
+          outreachTone: wsData.outreachTone || "Professional & Direct",
+          name: user?.user_metadata?.full_name || user?.email?.split('@')[0] || "User",
+          email: user?.email || "",
+          plan: wsData.plan || "Free",
+        });
+      } catch (err: any) {
+        console.error(err);
+        toast.error("Failed to load settings.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadSettings();
+  }, []);
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const handleSaveWorkspace = async () => {
+    setIsSaving(true);
+    try {
+      const res = await fetch('/api/workspace', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form)
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      toast.success("Workspace settings updated.");
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to update settings.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-full overflow-hidden">
+        <TopBar title="Settings" subtitle="Workspace, account, and agent configuration" />
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="w-8 h-8 animate-spin text-[#3B82F6]/30" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -111,8 +189,8 @@ export default function SettingsPage() {
               </SectionCard>
 
               <div className="flex justify-end">
-                <button className="sv-btn-primary text-xs flex items-center gap-1.5">
-                  <Save className="w-3.5 h-3.5" /> Save Changes
+                <button onClick={handleSaveWorkspace} disabled={isSaving} className="sv-btn-primary text-xs flex items-center gap-1.5 disabled:opacity-50">
+                  {isSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save Changes
                 </button>
               </div>
             </div>
@@ -125,25 +203,19 @@ export default function SettingsPage() {
                   <input value={form.name} onChange={set("name")} className="sv-input w-full" />
                 </Field>
                 <Field label="Email Address">
-                  <input type="email" value={form.email} onChange={set("email")} className="sv-input w-full" />
+                  <input type="email" value={form.email} disabled className="sv-input w-full opacity-50 cursor-not-allowed" />
                 </Field>
               </SectionCard>
 
               <SectionCard title="Current Plan">
                 <div className="flex items-center justify-between p-4 rounded-xl bg-[#3B82F6]/5 border border-[#3B82F6]/15">
                   <div>
-                    <p className="font-poppins text-sm font-semibold text-[#E5ECF6]">Growth Plan</p>
-                    <p className="text-xs text-[#64748B] mt-0.5">Up to 10 campaigns · Unlimited leads · Priority support</p>
+                    <p className="font-poppins text-sm font-semibold text-[#E5ECF6] uppercase">{form.plan} Plan</p>
+                    <p className="text-xs text-[#64748B] mt-0.5">Manage your billing and subscription in the billing portal.</p>
                   </div>
-                  <button className="sv-btn-outline text-xs">Upgrade</button>
+                  <button className="sv-btn-outline text-xs opacity-50 cursor-not-allowed">Manage</button>
                 </div>
               </SectionCard>
-
-              <div className="flex justify-end">
-                <button className="sv-btn-primary text-xs flex items-center gap-1.5">
-                  <Save className="w-3.5 h-3.5" /> Save Changes
-                </button>
-              </div>
             </div>
           )}
 
@@ -170,7 +242,7 @@ export default function SettingsPage() {
               </SectionCard>
 
               <div className="flex justify-end">
-                <button className="sv-btn-primary text-xs flex items-center gap-1.5">
+                <button className="sv-btn-primary text-xs flex items-center gap-1.5 opacity-50 cursor-not-allowed">
                   <Save className="w-3.5 h-3.5" /> Save Defaults
                 </button>
               </div>

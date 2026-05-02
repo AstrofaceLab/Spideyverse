@@ -21,8 +21,18 @@ import { getWorkspaceDisplayMeta } from "@/lib/workspace-utils";
 import { createClient } from "@/lib/supabase/client";
 import { CampaignStatusBadge } from "@/components/app/StatusBadge";
 import type { Campaign } from "@/lib/types";
+import { PageErrorBoundary } from "@/components/app/PageErrorBoundary";
+import { SkeletonCard } from "@/components/app/Skeletons";
 
 export default function DashboardPage() {
+  return (
+    <PageErrorBoundary>
+      <DashboardContent />
+    </PageErrorBoundary>
+  );
+}
+
+function DashboardContent() {
   const { workspace, user } = useWorkspace();
   const supabase = createClient();
   const meta = getWorkspaceDisplayMeta(workspace, user);
@@ -30,6 +40,8 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (!workspace) return;
+
     async function fetchRecentCampaigns() {
       if (!workspace) return;
       const { data } = await supabase
@@ -42,7 +54,25 @@ export default function DashboardPage() {
       if (data) setCampaigns(data);
       setIsLoading(false);
     }
+
     fetchRecentCampaigns();
+
+    // 🚀 Stage 1: Real-time Campaign Updates for Dashboard
+    const channel = supabase
+      .channel(`dashboard-updates-${workspace.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'campaigns', filter: `workspace_id=eq.${workspace.id}` },
+        () => {
+          console.log('[Realtime] Campaigns updated in dashboard');
+          fetchRecentCampaigns();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [workspace]);
 
   return (
@@ -138,8 +168,10 @@ export default function DashboardPage() {
               </div>
 
               {isLoading ? (
-                <div className="sv-card p-12 flex items-center justify-center">
-                  <Loader2 className="w-6 h-6 animate-spin text-[#3B82F6] opacity-30" />
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <SkeletonCard key={i} />
+                  ))}
                 </div>
               ) : campaigns.length === 0 ? (
                 <div className="sv-card border-dashed bg-white/[0.01] flex flex-col items-center justify-center p-12 text-center group hover:bg-white/[0.02] transition-colors">

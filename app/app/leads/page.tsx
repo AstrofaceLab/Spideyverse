@@ -1,36 +1,63 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { TopBar } from "@/components/layout/TopBar";
 import { LeadStatusBadge, DraftStatusBadge } from "@/components/app/StatusBadge";
-import { mockLeads, mockCampaigns } from "@/lib/mock-data";
 import { getScoreColor, formatDate, cn } from "@/lib/utils";
+import { useWorkspace } from "@/components/providers/workspace-provider";
+import { createClient } from "@/lib/supabase/client";
 import type { Lead } from "@/lib/types";
-import {
-  Search, Filter, X, ExternalLink, CheckCircle,
-  XCircle, RotateCcw, Mail, Users, ChevronRight,
-  Download,
+import { approveLead, ignoreLead } from "@/lib/actions/workflow";
+import { toast } from "sonner";
+import { 
+  Search, Filter, X, ExternalLink, CheckCircle, 
+  XCircle, RotateCcw, Mail, Users, ChevronRight, 
+  Download, Loader2 
 } from "lucide-react";
 import Link from "next/link";
+import { SkeletonTable } from "@/components/app/Skeletons";
 
-function ScoreBadge({ score }: { score: number }) {
-  const color = getScoreColor(score);
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className={cn(
-        "w-8 h-8 rounded-lg flex items-center justify-center text-xs font-poppins font-bold",
-        score >= 85 ? "bg-[#10B981]/10 border border-[#10B981]/20 text-[#10B981]" :
-        score >= 70 ? "bg-[#F59E0B]/10 border border-[#F59E0B]/20 text-[#F59E0B]" :
-        "bg-[#EF4444]/10 border border-[#EF4444]/20 text-[#EF4444]"
-      )}>
-        {score}
-      </div>
-    </div>
-  );
-}
+function LeadDetailPanel({ 
+  lead, 
+  onClose,
+  onStatusChange 
+}: { 
+  lead: Lead; 
+  onClose: () => void;
+  onStatusChange: (id: string, status: any) => void;
+}) {
+  const [isProcessing, setIsProcessing] = useState(false);
 
-function LeadDetailPanel({ lead, onClose }: { lead: Lead; onClose: () => void }) {
+  const handleApprove = async () => {
+    setIsProcessing(true);
+    onStatusChange(lead.id, 'qualified');
+    try {
+      await approveLead(lead.id);
+      toast.success(`Lead ${lead.companyName} approved.`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to approve lead.");
+      // Re-sync happens via fetchData if we wanted, but for now we trust the user re-loading or the revalidatePath
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleIgnore = async () => {
+    setIsProcessing(true);
+    onStatusChange(lead.id, 'disqualified');
+    try {
+      await ignoreLead(lead.id);
+      toast.info(`Lead ${lead.companyName} ignored.`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to ignore lead.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <div className="w-96 shrink-0 border-l border-white/[0.05] bg-[#0D1525] flex flex-col h-full">
       {/* Header */}
@@ -140,15 +167,24 @@ function LeadDetailPanel({ lead, onClose }: { lead: Lead; onClose: () => void })
 
       {/* Actions */}
       <div className="p-4 border-t border-white/[0.05] space-y-2">
-        <button className="w-full sv-btn-primary text-xs flex items-center justify-center gap-1.5">
-          <CheckCircle className="w-3.5 h-3.5" /> Approve Lead
+        <button 
+          onClick={handleApprove}
+          disabled={isProcessing || lead.status === 'qualified'}
+          className="w-full sv-btn-primary text-xs flex items-center justify-center gap-1.5 disabled:opacity-50"
+        >
+          {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />} 
+          {lead.status === 'qualified' ? 'Approved' : 'Approve Lead'}
         </button>
         <div className="grid grid-cols-2 gap-2">
-          <button className="sv-btn-outline text-xs flex items-center justify-center gap-1.5">
+          <button className="sv-btn-outline text-xs flex items-center justify-center gap-1.5 opacity-50 cursor-not-allowed">
             <RotateCcw className="w-3.5 h-3.5" /> Requali.
           </button>
-          <button className="sv-btn-outline text-xs flex items-center justify-center gap-1.5 border-[#EF4444]/20 text-[#EF4444]/70 hover:text-[#EF4444]">
-            <XCircle className="w-3.5 h-3.5" /> Ignore
+          <button 
+            onClick={handleIgnore}
+            disabled={isProcessing || lead.status === 'disqualified'}
+            className="sv-btn-outline text-xs flex items-center justify-center gap-1.5 border-[#EF4444]/20 text-[#EF4444]/70 hover:text-[#EF4444] disabled:opacity-50"
+          >
+            {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />} Ignore
           </button>
         </div>
         <Link href={`/app/outreach?campaign=${lead.campaignId}`} className="block w-full">
@@ -161,7 +197,17 @@ function LeadDetailPanel({ lead, onClose }: { lead: Lead; onClose: () => void })
   );
 }
 
+import { PageErrorBoundary } from "@/components/app/PageErrorBoundary";
+
 export default function LeadsPage() {
+  return (
+    <PageErrorBoundary>
+      <LeadsContent />
+    </PageErrorBoundary>
+  );
+}
+
+function LeadsContent() {
   const { workspace } = useWorkspace();
   const searchParams = useSearchParams();
   const campaignIdParam = searchParams.get("campaign");
@@ -174,6 +220,8 @@ export default function LeadsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [campaignFilter, setCampaignFilter] = useState(campaignIdParam || "all");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
 
   useEffect(() => {
     async function fetchData() {
@@ -186,39 +234,47 @@ export default function LeadsPage() {
       
       if (campaignData) setCampaigns(campaignData);
 
+      // 🚀 Step 11: Server-side pagination
+      const from = (page - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
       let query = supabase
         .from('leads')
-        .select('*')
+        .select('*, outreach_drafts(draft_status)', { count: 'exact' })
         .eq('workspace_id', workspace.id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
       const { data: leadsData } = await query;
       
       if (leadsData) {
-        setLeads(leadsData.map(l => ({
-          id: l.id,
-          companyName: l.company_name,
-          website: l.company_website,
-          contactName: l.contact_name,
-          contactTitle: l.contact_role,
-          email: l.email,
-          linkedIn: l.linkedin_url,
-          source: l.source,
-          summary: l.summary,
-          score: l.score || 0,
-          status: l.qualification_status,
-          campaignId: l.campaign_id,
-          campaignName: campaignData?.find(c => c.id === l.campaign_id)?.campaign_name || 'Unknown',
-          draftStatus: 'pending_review', // Fallback for now
-          createdAt: l.created_at,
-          tags: l.tags || [],
-          qualificationReasoning: l.reasoning || '',
-        })));
+        setLeads(leadsData.map(l => {
+          const draft = (l.outreach_drafts as any[])?.[0];
+          return {
+            id: l.id,
+            companyName: l.company_name,
+            website: l.company_website,
+            contactName: l.contact_name,
+            contactTitle: l.contact_role,
+            email: l.email,
+            linkedIn: l.linkedin_url,
+            source: l.source,
+            summary: l.summary,
+            score: l.score || 0,
+            status: l.qualification_status,
+            campaignId: l.campaign_id,
+            campaignName: campaignData?.find(c => c.id === l.campaign_id)?.campaign_name || 'Unknown',
+            draftStatus: draft?.draft_status || 'not_started',
+            createdAt: l.created_at,
+            tags: l.tags || [],
+            qualificationReasoning: l.reasoning || '',
+          };
+        }));
       }
       setIsLoading(false);
     }
     fetchData();
-  }, [workspace]);
+  }, [workspace, page]);
 
   const filtered = useMemo(() => {
     return leads.filter(l => {
@@ -231,10 +287,50 @@ export default function LeadsPage() {
     });
   }, [leads, statusFilter, campaignFilter, search]);
 
+  const handleOptimisticStatus = (id: string, status: any) => {
+    setLeads(prev => prev.map(l => l.id === id ? { ...l, status } : l));
+    if (selectedLead?.id === id) {
+      setSelectedLead(prev => prev ? { ...prev, status } : null);
+    }
+  };
+
   const campaignName = useMemo(() => {
     if (campaignFilter === "all") return "all campaigns";
-    return mockCampaigns.find(c => c.id === campaignFilter)?.campaign_name || "selected campaign";
-  }, [campaignFilter]);
+    return campaigns.find(c => c.id === campaignFilter)?.campaign_name || "selected campaign";
+  }, [campaignFilter, campaigns]);
+
+  const handleExport = () => {
+    if (leads.length === 0) return;
+    
+    const headers = ["Company", "Website", "Contact", "Title", "Email", "Score", "Status", "Campaign", "Added"];
+    const rows = filtered.map(l => [
+      l.companyName,
+      l.website,
+      l.contactName,
+      l.contactTitle,
+      l.email,
+      l.score,
+      l.status,
+      l.campaignName,
+      l.createdAt
+    ]);
+    
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(row => row.map(cell => `"${(cell || "").toString().replace(/"/g, '""')}"`).join(","))
+    ].join("\n");
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `spideyverse-leads-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success("Leads exported to CSV.");
+  };
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -243,7 +339,10 @@ export default function LeadsPage() {
           title="Leads"
           subtitle={`${filtered.length} leads tied to ${campaignName}`}
           actions={
-            <button className="sv-btn-outline text-xs flex items-center gap-1.5">
+            <button 
+              onClick={handleExport}
+              className="sv-btn-outline text-xs flex items-center gap-1.5"
+            >
               <Download className="w-3.5 h-3.5" /> Export
             </button>
           }
@@ -272,6 +371,25 @@ export default function LeadsPage() {
               </select>
               <Filter className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3 h-3 text-[#64748B] pointer-events-none" />
             </div>
+
+            {/* Pagination */}
+            <div className="flex items-center gap-1.5 bg-white/[0.03] p-1 rounded-lg border border-white/[0.05] ml-auto">
+              <button 
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="p-1.5 rounded-md hover:bg-white/[0.05] disabled:opacity-30 transition-all"
+              >
+                <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+              </button>
+              <span className="text-[10px] font-manrope font-semibold text-[#64748B] px-2 whitespace-nowrap">Page {page}</span>
+              <button 
+                onClick={() => setPage(p => p + 1)}
+                disabled={leads.length < PAGE_SIZE}
+                className="p-1.5 rounded-md hover:bg-white/[0.05] disabled:opacity-30 transition-all"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
             {["all", "new", "qualified", "disqualified", "pending_review", "contacted"].map(f => (
               <button key={f} onClick={() => setStatusFilter(f)}
                 className={cn(
@@ -286,62 +404,76 @@ export default function LeadsPage() {
           </div>
 
           {/* Table */}
-          <div className="sv-card overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-white/[0.05]">
-                  {["Company", "Contact", "Email", "Score", "Status", "Campaign", "Draft", "Added"].map(h => (
-                    <th key={h} className="px-4 py-3 text-left text-xs font-manrope font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(lead => (
-                  <tr key={lead.id}
-                    onClick={() => setSelectedLead(lead)}
-                    className={cn(
-                      "border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors cursor-pointer",
-                      selectedLead?.id === lead.id && "bg-[#3B82F6]/5 border-l-2 border-l-[#3B82F6]"
-                    )}>
-                    <td className="px-4 py-3.5">
-                      <p className="text-sm font-manrope font-medium text-[#E5ECF6]">{lead.companyName}</p>
-                      <p className="text-xs text-[#64748B]">{lead.website}</p>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <p className="text-xs text-[#94A3B8] font-manrope">{lead.contactName || "—"}</p>
-                      <p className="text-xs text-[#64748B]">{lead.contactTitle || ""}</p>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <p className="text-xs text-[#94A3B8] font-manrope">{lead.email}</p>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <ScoreBadge score={lead.score} />
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <LeadStatusBadge status={lead.status} />
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <p className="text-xs text-[#94A3B8] truncate max-w-32 font-manrope">{lead.campaignName}</p>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <DraftStatusBadge status={lead.draftStatus} />
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span className="text-xs text-[#64748B] whitespace-nowrap font-manrope">{formatDate(lead.createdAt)}</span>
-                    </td>
+          {isLoading ? (
+            <SkeletonTable rows={10} columns={8} />
+          ) : (
+            <div className="sv-card overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-white/[0.05]">
+                    {["Company", "Contact", "Email", "Score", "Status", "Campaign", "Draft", "Added"].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-manrope font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">
+                        {h}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-20 text-center text-[#64748B] text-xs">
+                        No leads found.
+                      </td>
+                    </tr>
+                  ) : filtered.map(lead => (
+                    <tr key={lead.id}
+                      onClick={() => setSelectedLead(lead)}
+                      className={cn(
+                        "border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors cursor-pointer",
+                        selectedLead?.id === lead.id && "bg-[#3B82F6]/5 border-l-2 border-l-[#3B82F6]"
+                      )}>
+                      <td className="px-4 py-3.5">
+                        <p className="text-sm font-manrope font-medium text-[#E5ECF6]">{lead.companyName}</p>
+                        <p className="text-xs text-[#64748B]">{lead.website}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <p className="text-xs text-[#94A3B8] font-manrope">{lead.contactName || "—"}</p>
+                        <p className="text-xs text-[#64748B]">{lead.contactTitle || ""}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <p className="text-xs text-[#94A3B8] font-manrope">{lead.email}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <ScoreBadge score={lead.score} />
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <LeadStatusBadge status={lead.status} />
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <p className="text-xs text-[#94A3B8] truncate max-w-32 font-manrope">{lead.campaignName}</p>
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <DraftStatusBadge status={lead.draftStatus} />
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className="text-xs text-[#64748B] whitespace-nowrap font-manrope">{formatDate(lead.createdAt)}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Detail panel */}
       {selectedLead && (
-        <LeadDetailPanel lead={selectedLead} onClose={() => setSelectedLead(null)} />
+        <LeadDetailPanel 
+          lead={selectedLead} 
+          onClose={() => setSelectedLead(null)} 
+          onStatusChange={handleOptimisticStatus}
+        />
       )}
     </div>
   );

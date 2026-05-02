@@ -28,27 +28,24 @@ We have transitioned from a static prototype to a functional application with a 
    - Row Level Security (RLS) policies implemented for data privacy.
    - Supabase Admin client for backend-only operations.
 
-5. **Initial Orchestration Logic**
-   - `CampaignOrchestrator` framework started.
+5. **Agent-Net Orchestration Logic**
+   - `WorkflowOrchestrator` fully managing the multi-stage pipeline.
    - Serper.dev integration for lead research.
-   - API endpoints for triggering campaign runs.
-   - Mock fallbacks for AI agents during development.
+   - Full AI Agent Integration: Replaced mock logic with actual AI prompts using OpenAI for Research, Qualification, Outreach Drafting, and Reporting.
+   - Activity logging for every step in the pipeline.
 
 ---
 
 ## 🛠 What's Needed to Continue
 
-### 1. AI Agent Execution Layer
-- **Full Agent Integration:** Replace mock logic in `lib/orchestrator/` with actual AI prompts using OpenAI/Anthropic APIs.
-- **Serper Research:** Refine the lead discovery agent to parse search results into structured `leads` table entries.
-- **OpenAI Fallback Handling:** Ensure robust error handling for API quotas and failures.
+### 1. Real-time Dashboard (Critical)
+- **Supabase Realtime:** Implement real-time listeners on the `workflow_runs` and `agent_tasks` tables to replace polling.
+- **UI Sync:** Update the campaign detail page and dashboard metrics automatically.
 
-### 2. Real-time Dashboard (Critical)
-- **Supabase Realtime:** Implement real-time listeners on the `workflow_runs` and `agent_tasks` tables.
-- **UI Sync:** Update the campaign detail page and dashboard metrics automatically as agents complete tasks.
+### 2. Robust Extraction & Scraping
+- **Firecrawl/Apify Integration:** Replace standard `fetch` in `DataExtractor` with a professional scraping service to bypass anti-bot protections.
 
 ### 3. Lead Management & Enrichment
-- **Scraping Integration:** Connect a scraping service (e.g., Firecrawl, Apify) to enrich lead data after discovery.
 - **CSV Export/Import:** Finalize functionality for manual lead management.
 
 ### 4. Outreach Pipeline

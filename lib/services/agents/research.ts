@@ -2,6 +2,7 @@ import { serperService } from '../serper';
 import { createAdminClient } from '../../supabase/admin';
 import { queryGenerator } from '../query-generator';
 import { dataExtractor } from '../extractor';
+import { apolloService } from '../apollo';
 
 export interface ResearchInput {
   campaignId: string;
@@ -16,91 +17,159 @@ export interface ResearchInput {
 export class ResearchAgent {
   private supabase = createAdminClient();
 
-  async run(input: ResearchInput) {
-    console.log(`[ResearchAgent] Starting for campaign ${input.campaignId}`);
-    
-    // 1. Generate high-intent queries
-    const queries = await queryGenerator.generateQueries({
+  /**
+   * Step 1: Query Engineering
+   */
+  async generateQueries(input: ResearchInput): Promise<string[]> {
+    return await queryGenerator.generateQueries({
       niche: input.niche,
       target_region: input.targetRegion,
       ideal_lead_profile: input.idealLeadProfile,
       offer: input.offerContext
     });
+  }
 
-    const allLeads: any[] = [];
-    const processedUrls = new Set<string>();
+  /**
+   * Step 2a: Apollo Discovery execution (Deep B2B Data)
+   */
+  async discoverViaApollo(input: ResearchInput): Promise<any[]> {
+    console.log(`[ResearchAgent] Launching Apollo intelligence gathering...`);
+    const params = apolloService.mapCampaignToSearchParams({
+      niche: input.niche,
+      business_type: input.businessType,
+      target_region: input.targetRegion,
+      ideal_lead_profile: input.idealLeadProfile
+    });
 
-    // 2. Execute searches (Batch processing)
+    try {
+      const result = await apolloService.searchPeople(params);
+      const people = result.people || [];
+      console.log(`[ResearchAgent] Apollo found ${people.length} pre-qualified leads.`);
+      
+      return people.map((p: any) => ({
+        campaign_id: input.campaignId,
+        workspace_id: input.workspaceId,
+        company_name: p.organization?.name || 'Unknown',
+        company_website: p.organization?.primary_domain || p.organization?.website_url,
+        contact_name: p.name,
+        contact_role: p.title,
+        email: p.email,
+        source: 'apollo',
+        summary: `Apollo verified ${p.title} at ${p.organization?.name}. Located in ${p.city}, ${p.state}.`,
+        qualification_status: 'new',
+        tags: [p.organization?.industry || 'B2B'],
+        score: 80, // Pre-scored higher because it's from a verified B2B source
+      }));
+    } catch (err: any) {
+      console.error(`[ResearchAgent] Apollo stage failed:`, err.message);
+      return [];
+    }
+  }
+
+  /**
+   * Step 2b: Serper Search execution (Web-scale Discovery)
+   */
+  async executeSearch(queries: string[]): Promise<any[]> {
+    const allResults = [];
+    console.log(`[ResearchAgent] Starting search for ${queries.length} queries`);
     for (const query of queries) {
       try {
-        const results = await serperService.search(query, 10);
-        
-        for (const result of results) {
-          if (processedUrls.has(result.link)) continue;
-          processedUrls.add(result.link);
-
-          // 3. Extract data from each result
-          // We limit the number of leads per run to ~20-50 as requested
-          if (allLeads.length >= 30) break; 
-
-          const extractedLead = await dataExtractor.processUrl(result.link);
-          
-          if (extractedLead) {
-            allLeads.push({
-              campaign_id: input.campaignId,
-              workspace_id: input.workspaceId,
-              company_name: extractedLead.company_name || result.title.split('-')[0].trim(),
-              company_website: extractedLead.website || result.link,
-              contact_name: extractedLead.contact_name,
-              contact_role: extractedLead.contact_role,
-              email: extractedLead.email,
-              source: 'serper',
-              source_url: result.link,
-              summary: extractedLead.summary || result.snippet,
-              qualification_status: 'new',
-              tags: extractedLead.industry_hint ? [extractedLead.industry_hint] : [],
-              score: null,
-            });
-          } else {
-            // Fallback to basic info if extraction failed but we have a result
-            allLeads.push({
-              campaign_id: input.campaignId,
-              workspace_id: input.workspaceId,
-              company_name: result.title.split('-')[0].trim(),
-              company_website: result.link,
-              source: 'serper',
-              source_url: result.link,
-              summary: result.snippet,
-              qualification_status: 'new',
-              score: null,
-            });
-          }
-        }
-        if (allLeads.length >= 30) break;
-      } catch (err) {
-        console.error(`Search failed for query "${query}":`, err);
+        const results = await serperService.search(query, 12);
+        console.log(`[ResearchAgent] Query "${query}" returned ${results.length} results`);
+        allResults.push(...results);
+      } catch (err: any) {
+        console.error(`[ResearchAgent] Query failed: ${query}`, err.message);
       }
     }
+    console.log(`[ResearchAgent] Total results found: ${allResults.length}`);
+    return allResults;
+  }
 
-    // 4. Deduplication by email or (company_name + website)
-    const uniqueLeads = this.deduplicateLeads(allLeads);
+  /**
+   * Step 3: Scraping & Extraction
+   */
+  async extractLeads(searchResults: any[], campaignId: string, workspaceId: string): Promise<{ leads: any[], scannedCount: number }> {
+    const rawLeads = [];
+    const processedUrls = new Set<string>();
+    let scannedCount = 0;
 
-    // 5. Persist to DB
-    if (uniqueLeads.length > 0) {
-      const { error } = await this.supabase.from('leads').insert(uniqueLeads);
-      if (error) {
-        console.error('[ResearchAgent] Error inserting leads:', error);
-        throw new Error(`Failed to save discovered leads: ${error.message}`);
+    console.log(`[ResearchAgent] Extracting leads from ${searchResults.length} results`);
+
+    for (const result of searchResults) {
+      if (processedUrls.has(result.link)) continue;
+      processedUrls.add(result.link);
+      scannedCount++;
+      
+      if (rawLeads.length >= 50) {
+        console.log(`[ResearchAgent] Reached raw lead limit (50)`);
+        break; // Limit raw pool
+      }
+
+      console.log(`[ResearchAgent] Processing URL (${scannedCount}/${searchResults.length}): ${result.link}`);
+      const extracted = await dataExtractor.processUrl(result.link);
+      if (extracted) {
+        console.log(`[ResearchAgent] Successfully extracted: ${extracted.company_name}`);
+        rawLeads.push({
+          campaign_id: campaignId,
+          workspace_id: workspaceId,
+          company_name: extracted.company_name || result.title.split('-')[0].trim(),
+          company_website: extracted.website || result.link,
+          contact_name: extracted.contact_name || null,
+          contact_role: extracted.role || null, // Map 'role' to 'contact_role'
+          email: extracted.email || null,
+          source: 'serper',
+          summary: extracted.summary || result.snippet,
+          qualification_status: 'new',
+          tags: extracted.industry_hint ? [extracted.industry_hint] : [],
+          score: null,
+        });
+      } else {
+        console.log(`[ResearchAgent] Extraction failed for ${result.link}, using fallback.`);
+        // Fallback to basic info from search result
+        rawLeads.push({
+          campaign_id: campaignId,
+          workspace_id: workspaceId,
+          company_name: result.title.split('-')[0].trim(),
+          company_website: result.link,
+          source: 'serper',
+          summary: result.snippet,
+          qualification_status: 'new',
+          tags: [],
+          score: null,
+        });
       }
     }
+    console.log(`[ResearchAgent] Extraction complete. Generated ${rawLeads.length} raw leads.`);
+    return { leads: rawLeads, scannedCount };
+  }
 
-    const emailCount = uniqueLeads.filter(l => !!l.email).length;
+
+  /**
+   * Step 4: Normalization & Global Deduplication
+   */
+  async normalizeAndPersist(rawLeads: any[]): Promise<any> {
+    const batchUnique = this.deduplicateLeads(rawLeads);
+    const finalLeads = [];
+    
+    // Global DB Check (Simplified for performance in this demo/phase)
+    for (const lead of batchUnique) {
+      const { data: exists } = await this.supabase
+        .from('leads')
+        .select('id')
+        .eq('company_website', lead.company_website)
+        .maybeSingle();
+      
+      if (!exists) finalLeads.push(lead);
+    }
+
+    if (finalLeads.length > 0) {
+      const { error } = await this.supabase.from('leads').insert(finalLeads);
+      if (error) throw error;
+    }
 
     return {
-      leadsFound: uniqueLeads.length,
-      emailCount,
-      extractionSuccessRate: uniqueLeads.length > 0 ? (emailCount / uniqueLeads.length) * 100 : 0,
-      source: 'serper',
+      leadsFound: finalLeads.length,
+      emailCount: finalLeads.filter(l => !!l.email).length
     };
   }
 
@@ -111,10 +180,11 @@ export class ResearchAgent {
 
     for (const lead of leads) {
       if (lead.email) {
-        if (seenEmails.has(lead.email.toLowerCase())) continue;
-        seenEmails.add(lead.email.toLowerCase());
+        const email = lead.email.toLowerCase().trim();
+        if (seenEmails.has(email)) continue;
+        seenEmails.add(email);
       } else {
-        const entityKey = `${lead.company_name?.toLowerCase()}-${lead.company_website?.toLowerCase()}`;
+        const entityKey = `${lead.company_name?.toLowerCase().trim()}-${lead.company_website?.toLowerCase().trim()}`;
         if (seenEntities.has(entityKey)) continue;
         seenEntities.add(entityKey);
       }
@@ -124,4 +194,3 @@ export class ResearchAgent {
     return result;
   }
 }
-

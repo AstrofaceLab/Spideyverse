@@ -72,4 +72,15 @@ export class ApolloService {
   }
 }
 
-export const apolloService = new ApolloService(process.env.APOLLO_API_KEY || '');
+function requireEnv(key: string): string {
+  const value = process.env[key];
+  if (!value) {
+    throw new Error(
+      `[Config] Missing required environment variable: "${key}". ` +
+      `Check your .env.local file and deployment environment settings.`
+    );
+  }
+  return value;
+}
+
+export const apolloService = new ApolloService(requireEnv('APOLLO_API_KEY'));

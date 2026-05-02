@@ -1,13 +1,31 @@
+"use client";
+
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
+import { useWorkspace } from "@/components/providers/workspace-provider";
+import { createClient } from "@/lib/supabase/client";
 import { TopBar } from "@/components/layout/TopBar";
 import { DraftStatusBadge } from "@/components/app/StatusBadge";
 import { timeAgo, cn } from "@/lib/utils";
 import type { OutreachDraft } from "@/lib/types";
 import { CheckCircle, XCircle, RotateCcw, Edit3, Bot, Save, X, Loader2 } from "lucide-react";
-import { approveDraft, rejectDraft } from "@/lib/actions/workflow";
+import { approveDraft, rejectDraft, batchApproveDrafts, sendApprovedOutreach, updateOutreachDraft, regenerateDraft } from "@/lib/actions/workflow";
+import { Rocket } from "lucide-react";
+import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/app/ConfirmDialog";
+import { SkeletonRow } from "@/components/app/Skeletons";
 
-function DraftEditor({ draft, onClose, onUpdate }: { draft: OutreachDraft; onClose: () => void; onUpdate: () => void }) {
+function DraftEditor({ 
+  draft, 
+  onClose, 
+  onUpdate,
+  onStatusChange 
+}: { 
+  draft: OutreachDraft; 
+  onClose: () => void; 
+  onUpdate: () => void;
+  onStatusChange: (id: string, status: any) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [body, setBody] = useState(draft.body);
@@ -15,11 +33,16 @@ function DraftEditor({ draft, onClose, onUpdate }: { draft: OutreachDraft; onClo
 
   const handleApprove = async () => {
     setIsProcessing(true);
+    // Optimistic Update
+    onStatusChange(draft.id, 'approved');
     try {
       await approveDraft(draft.id);
-      onUpdate();
+      toast.success(`Draft for ${draft.companyName} approved.`);
+      // onUpdate() is called to ensure consistency but optimistic UI already handled visual part
     } catch (err) {
       console.error(err);
+      toast.error("Failed to approve draft.");
+      onUpdate(); // Revert on failure
     } finally {
       setIsProcessing(false);
     }
@@ -27,11 +50,47 @@ function DraftEditor({ draft, onClose, onUpdate }: { draft: OutreachDraft; onClo
 
   const handleReject = async () => {
     setIsProcessing(true);
+    // Optimistic Update
+    onStatusChange(draft.id, 'rejected');
     try {
       await rejectDraft(draft.id);
+      toast.info(`Draft for ${draft.companyName} rejected.`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to reject draft.");
+      onUpdate(); // Revert on failure
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRegen = async () => {
+    setIsProcessing(true);
+    try {
+      await regenerateDraft(draft.id);
+      toast.success("Draft regenerated successfully.");
+      onUpdate();
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || "Failed to regenerate draft.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setIsProcessing(true);
+    try {
+      await updateOutreachDraft(draft.id, {
+        subject_line: subject,
+        message_body: body
+      });
+      toast.success("Draft changes saved.");
+      setEditing(false);
       onUpdate();
     } catch (err) {
       console.error(err);
+      toast.error("Failed to save changes.");
     } finally {
       setIsProcessing(false);
     }
@@ -128,10 +187,15 @@ function DraftEditor({ draft, onClose, onUpdate }: { draft: OutreachDraft; onClo
       <div className="p-4 border-t border-white/[0.05] space-y-2">
         {editing ? (
           <div className="flex gap-2">
-            <button onClick={() => setEditing(false)} className="flex-1 sv-btn-primary text-xs flex items-center justify-center gap-1.5">
-              <Save className="w-3.5 h-3.5" /> Save Changes
+            <button 
+              onClick={handleSave} 
+              disabled={isProcessing}
+              className="flex-1 sv-btn-primary text-xs flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} 
+              Save Changes
             </button>
-            <button onClick={() => setEditing(false)} className="sv-btn-outline text-xs">
+            <button onClick={() => setEditing(false)} disabled={isProcessing} className="sv-btn-outline text-xs disabled:opacity-50">
               Cancel
             </button>
           </div>
@@ -149,8 +213,12 @@ function DraftEditor({ draft, onClose, onUpdate }: { draft: OutreachDraft; onClo
               <button onClick={() => setEditing(true)} className="sv-btn-outline text-xs flex items-center justify-center gap-1">
                 <Edit3 className="w-3 h-3" /> Edit
               </button>
-              <button disabled className="sv-btn-outline text-xs flex items-center justify-center gap-1 opacity-50">
-                <RotateCcw className="w-3 h-3" /> Regen
+              <button 
+                onClick={handleRegen}
+                disabled={isProcessing}
+                className="sv-btn-outline text-xs flex items-center justify-center gap-1 disabled:opacity-50"
+              >
+                {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} Regen
               </button>
               <button 
                 onClick={handleReject}
@@ -167,7 +235,17 @@ function DraftEditor({ draft, onClose, onUpdate }: { draft: OutreachDraft; onClo
   );
 }
 
+import { PageErrorBoundary } from "@/components/app/PageErrorBoundary";
+
 export default function OutreachPage() {
+  return (
+    <PageErrorBoundary>
+      <OutreachContent />
+    </PageErrorBoundary>
+  );
+}
+
+function OutreachContent() {
   const searchParams = useSearchParams();
   const campaignIdParam = searchParams.get("campaign");
 
@@ -177,6 +255,50 @@ export default function OutreachPage() {
   const [filter, setFilter] = useState("all");
   const [campaignFilter, setCampaignFilter] = useState(campaignIdParam || "all");
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Confirmation States
+  const [confirmBatchApprove, setConfirmBatchApprove] = useState(false);
+  const [confirmSendBatch, setConfirmSendBatch] = useState(false);
+
+  const { workspace } = useWorkspace();
+  const supabase = createClient();
+
+  useEffect(() => {
+    async function fetchCampaigns() {
+      if (!workspace) return;
+      const { data } = await supabase
+        .from('campaigns')
+        .select('id, campaign_name')
+        .eq('workspace_id', workspace.id);
+      if (data) setCampaigns(data);
+    }
+    fetchCampaigns();
+  }, [workspace]);
+
+  useEffect(() => {
+    fetchDrafts();
+  }, [campaignFilter, filter, workspace]);
+
+  // 🚀 Step 13: Real-time Outreach Updates
+  useEffect(() => {
+    if (!workspace) return;
+
+    const channel = supabase
+      .channel(`outreach-updates-${workspace.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'outreach_drafts', filter: `workspace_id=eq.${workspace.id}` },
+        () => {
+          console.log('[Realtime] Outreach drafts updated');
+          fetchDrafts();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [workspace]);
 
   const fetchDrafts = async () => {
     try {
@@ -186,6 +308,72 @@ export default function OutreachPage() {
       setIsLoading(false);
     } catch (err) {
       console.error(err);
+      toast.error("Failed to load drafts.");
+    }
+  };
+
+  const handleOptimisticStatus = (id: string, status: any) => {
+    setDrafts(prev => prev.map(d => d.id === id ? { ...d, status } : d));
+    if (selectedDraft?.id === id) {
+      setSelectedDraft(prev => prev ? { ...prev, status } : null);
+    }
+  };
+
+  const handleBatchApprove = async () => {
+    if (campaignFilter === 'all') {
+      toast.error("Please select a specific campaign to batch approve.");
+      return;
+    }
+    setConfirmBatchApprove(true);
+  };
+
+  const executeBatchApprove = async () => {
+    setConfirmBatchApprove(false);
+    setIsLoading(true);
+    try {
+      const result = await batchApproveDrafts(campaignFilter);
+      if (result.success) {
+        toast.success(`Successfully approved ${result.count} drafts.`);
+        fetchDrafts();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to batch approve drafts.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSendBatch = async () => {
+    if (campaignFilter === 'all') {
+      toast.error("Please select a specific campaign to send.");
+      return;
+    }
+    const approvedCount = drafts.filter(d => d.status === 'approved').length;
+    if (approvedCount === 0) {
+      toast.error("No approved drafts found for this campaign.");
+      return;
+    }
+    setConfirmSendBatch(true);
+  };
+
+  const executeSendBatch = async () => {
+    setConfirmSendBatch(false);
+    setIsLoading(true);
+    const approvedCount = drafts.filter(d => d.status === 'approved').length;
+    try {
+      const result = await sendApprovedOutreach(campaignFilter);
+      if (result.success) {
+        if (result.failedCount > 0) {
+          toast.warning(`Sent ${result.sentCount} messages, but ${result.failedCount} failed.`);
+        } else {
+          toast.success(`Successfully sent ${result.sentCount} messages.`);
+        }
+        fetchDrafts();
+      }
+    } catch (err: any) {
+      toast.error(err.message || "Failed to send messages.");
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -195,8 +383,18 @@ export default function OutreachPage() {
 
   useEffect(() => {
     // Fetch campaigns for filter
-    fetch('/api/campaigns').then(res => res.json()).then(data => setCampaigns(data)).catch(console.error);
+    fetch('/api/campaigns')
+      .then(res => res.json())
+      .then(data => setCampaigns(data))
+      .catch(err => {
+        console.error(err);
+        toast.error("Failed to load campaigns.");
+      });
   }, []);
+
+  const activeCampaignName = useMemo(() => {
+    return campaigns.find(c => c.id === campaignFilter)?.campaign_name || "Campaign";
+  }, [campaigns, campaignFilter]);
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -206,9 +404,27 @@ export default function OutreachPage() {
           title="Outreach Review"
           subtitle="Review and approve AI-generated outreach drafts"
           actions={
-            <span className="text-xs text-[#F59E0B] font-manrope font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/20 px-2.5 py-1 rounded-full">
-              {drafts.filter(d => d.status === "pending_review").length} pending
-            </span>
+            <div className="flex items-center gap-2">
+              {campaignFilter !== 'all' && drafts.some(d => d.status === 'pending_review') && (
+                <button 
+                  onClick={handleBatchApprove}
+                  className="sv-btn-primary bg-[#10B981] border-[#10B981] flex items-center gap-1.5 text-[10px] py-1.5 h-auto"
+                >
+                  <CheckCircle className="w-3 h-3" /> Batch Approve
+                </button>
+              )}
+              {campaignFilter !== 'all' && drafts.some(d => d.status === 'approved') && (
+                <button 
+                  onClick={handleSendBatch}
+                  className="sv-btn-primary bg-[#3B82F6] border-[#3B82F6] flex items-center gap-1.5 text-[10px] py-1.5 h-auto"
+                >
+                  <Rocket className="w-3 h-3" /> Send All Approved
+                </button>
+              )}
+              <span className="text-xs text-[#F59E0B] font-manrope font-medium bg-[#F59E0B]/10 border border-[#F59E0B]/20 px-2.5 py-1 rounded-full">
+                {drafts.filter(d => d.status === "pending_review").length} pending
+              </span>
+            </div>
           }
         />
 
@@ -244,7 +460,11 @@ export default function OutreachPage() {
 
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
-            <div className="p-8 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-[#3B82F6]/30" /></div>
+            <div className="space-y-0.5">
+              {Array.from({ length: 10 }).map((_, i) => (
+                <SkeletonRow key={i} columns={3} />
+              ))}
+            </div>
           ) : drafts.length === 0 ? (
             <div className="p-8 text-center text-[#64748B] text-xs">No drafts found.</div>
           ) : drafts.map(draft => (
@@ -267,9 +487,34 @@ export default function OutreachPage() {
       {/* Draft editor */}
       {selectedDraft && (
         <div className="flex-1 bg-[#0D1525] overflow-hidden flex flex-col">
-          <DraftEditor draft={selectedDraft} onClose={() => setSelectedDraft(null)} onUpdate={fetchDrafts} />
+          <DraftEditor 
+            draft={selectedDraft} 
+            onClose={() => setSelectedDraft(null)} 
+            onUpdate={fetchDrafts} 
+            onStatusChange={handleOptimisticStatus}
+          />
         </div>
       )}
+
+      {/* Batch Confirmations */}
+      <ConfirmDialog
+        isOpen={confirmBatchApprove}
+        onClose={() => setConfirmBatchApprove(false)}
+        onConfirm={executeBatchApprove}
+        title="Batch Approve Drafts"
+        description={`Are you sure you want to approve all pending drafts for "${activeCampaignName}"? This will mark them as ready for outreach.`}
+        confirmText="Approve All"
+      />
+
+      <ConfirmDialog
+        isOpen={confirmSendBatch}
+        onClose={() => setConfirmSendBatch(false)}
+        onConfirm={executeSendBatch}
+        title="Send Outreach Batch"
+        description={`You are about to send ${drafts.filter(d => d.status === 'approved').length} personalized messages for "${activeCampaignName}". This action cannot be undone.`}
+        confirmText="Send Messages"
+        variant="primary"
+      />
     </div>
   );
 }
