@@ -27,8 +27,8 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <TopBar
-        title={campaign.name}
-        breadcrumb={["Campaigns", campaign.name]}
+        title={campaign.campaign_name}
+        breadcrumb={["Campaigns", campaign.campaign_name]}
         actions={
           <div className="flex items-center gap-2">
             <button className="sv-btn-outline flex items-center gap-1.5 text-xs">
@@ -53,23 +53,23 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
           <div className="flex items-start justify-between gap-4 mb-4">
             <div>
               <div className="flex items-center gap-2.5 mb-1.5">
-                <h2 className="font-poppins text-lg font-semibold text-[#E5ECF6]">{campaign.name}</h2>
+                <h2 className="font-poppins text-lg font-semibold text-[#E5ECF6]">{campaign.campaign_name}</h2>
                 <CampaignStatusBadge status={campaign.status} />
               </div>
               <p className="text-sm text-[#64748B]">{campaign.objective}</p>
-              <p className="text-xs text-[#4B5563] mt-1">Created {formatDate(campaign.createdAt)} · Updated {formatDate(campaign.updatedAt)}</p>
+              <p className="text-xs text-[#4B5563] mt-1">Created {formatDate(campaign.created_at)} · Updated {formatDate(campaign.updated_at)}</p>
             </div>
             <div className="shrink-0 hidden md:flex items-center gap-4 text-right">
               <div>
-                <p className="font-poppins text-2xl font-semibold text-[#3B82F6]">{campaign.leadsFound}</p>
+                <p className="font-poppins text-2xl font-semibold text-[#3B82F6]">{campaign.leads_found || 0}</p>
                 <p className="text-xs text-[#64748B]">Leads Found</p>
               </div>
               <div>
-                <p className="font-poppins text-2xl font-semibold text-[#10B981]">{campaign.qualifiedLeads}</p>
+                <p className="font-poppins text-2xl font-semibold text-[#10B981]">{campaign.qualified_leads || 0}</p>
                 <p className="text-xs text-[#64748B]">Qualified</p>
               </div>
               <div>
-                <p className="font-poppins text-2xl font-semibold text-[#8B5CF6]">{campaign.draftsCreated}</p>
+                <p className="font-poppins text-2xl font-semibold text-[#8B5CF6]">{campaign.drafts_created || 0}</p>
                 <p className="text-xs text-[#64748B]">Drafts</p>
               </div>
             </div>
@@ -78,16 +78,16 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
           {/* Workflow Stepper */}
           <div className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.05]">
             <p className="text-xs font-manrope text-[#64748B] mb-4">Workflow Progress</p>
-            <WorkflowStepper stageStatuses={campaign.stageStatuses} currentStage={campaign.currentStage} />
+            <WorkflowStepper stageStatuses={(campaign as any).stage_statuses || { research: "idle", qualification: "idle", outreach: "idle", reporting: "idle" }} currentStage={campaign.current_stage} />
           </div>
 
           {/* Meta strip */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 pt-4 border-t border-white/[0.05]">
             {[
               { label: "Target Niche", value: campaign.niche },
-              { label: "Region", value: campaign.targetRegion },
-              { label: "Channel", value: campaign.outreachChannel },
-              { label: "Lead Target", value: `${campaign.leadTargetCount} leads` },
+              { label: "Region", value: campaign.target_region },
+              { label: "Channel", value: campaign.outreach_channel },
+              { label: "Lead Target", value: `${campaign.target_lead_count} leads` },
             ].map(m => (
               <div key={m.label}>
                 <p className="text-xs text-[#64748B]">{m.label}</p>
@@ -134,11 +134,11 @@ export default function CampaignDetailPage({ params }: { params: { id: string } 
             <p className="sv-section-title">Campaign Configuration</p>
             <dl className="space-y-3">
               {[
-                { label: "Business Type", value: campaign.businessType },
-                { label: "Ideal Lead Profile", value: campaign.idealLeadProfile },
-                { label: "Offered Service", value: campaign.offeredService },
-                { label: "Value Proposition", value: campaign.valueProp },
-                { label: "Outreach Tone", value: campaign.outreachTone },
+                { label: "Business Type", value: campaign.business_type },
+                { label: "Ideal Lead Profile", value: campaign.ideal_lead_profile },
+                { label: "Offered Service", value: campaign.offer_context },
+                { label: "Value Proposition", value: campaign.value_proposition },
+                { label: "Outreach Tone", value: campaign.outreach_tone },
               ].map(f => (
                 <div key={f.label}>
                   <dt className="text-xs text-[#64748B] mb-0.5">{f.label}</dt>

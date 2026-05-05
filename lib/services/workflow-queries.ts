@@ -1,5 +1,5 @@
 import { createAdminClient } from '../supabase/admin';
-import { Campaign, WorkflowStage, Agent, ActivityEvent } from '../types';
+import { Campaign, WorkflowStage, Agent, ActivityEvent, AgentType } from '../types';
 
 /**
  * Fetches real orchestration state for a campaign from the database.

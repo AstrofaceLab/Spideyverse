@@ -4,6 +4,9 @@ import { TopBar } from "@/components/layout/TopBar";
 import { AgentCard } from "@/components/app/AgentCard";
 import { mockAgents } from "@/lib/mock-data";
 import { Network, ArrowRight } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useWorkspace } from "@/components/providers/workspace-provider";
+import { createClient } from "@/lib/supabase/client";
 
 const agentAccents: Record<string, string> = {
   research: "#3B82F6",

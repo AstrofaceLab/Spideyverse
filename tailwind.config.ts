@@ -25,12 +25,7 @@ const config: Config = {
         bg: "#0A0F1C",
         surface: "#121A2B",
         panel: "rgba(255,255,255,0.03)",
-        border: "rgba(255,255,255,0.08)",
-        accent: {
-          blue: "#3B82F6",
-          violet: "#8B5CF6",
-          cyan: "#06B6D4",
-        },
+
         text: {
           primary: "#E5ECF6",
           secondary: "#94A3B8",
@@ -74,6 +69,9 @@ const config: Config = {
         accent: {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
+          blue: "#3B82F6",
+          violet: "#8B5CF6",
+          cyan: "#06B6D4",
         },
         destructive: {
           DEFAULT: "hsl(var(--destructive))",

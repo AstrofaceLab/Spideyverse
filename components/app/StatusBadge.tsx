@@ -89,3 +89,16 @@ export function LeadStatusBadge({ status }: { status: LeadStatus }) {
   const cfg = getLeadStatusConfig(status);
   return <StatusBadge status={status} {...cfg} showDot={false} />;
 }
+
+export function ScoreBadge({ score }: { score: number }) {
+  const color = score >= 85 ? "text-[#10B981] bg-[#10B981]/10 border-[#10B981]/20" :
+                score >= 70 ? "text-[#F59E0B] bg-[#F59E0B]/10 border-[#F59E0B]/20" :
+                "text-[#EF4444] bg-[#EF4444]/10 border-[#EF4444]/20";
+  
+  return (
+    <span className={cn("px-2 py-0.5 rounded-md text-xs font-bold font-poppins border", color)}>
+      {score}
+    </span>
+  );
+}
+

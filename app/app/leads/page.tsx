@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { TopBar } from "@/components/layout/TopBar";
-import { LeadStatusBadge, DraftStatusBadge } from "@/components/app/StatusBadge";
+import { LeadStatusBadge, DraftStatusBadge, ScoreBadge } from "@/components/app/StatusBadge";
 import { getScoreColor, formatDate, cn } from "@/lib/utils";
 import { useWorkspace } from "@/components/providers/workspace-provider";
 import { createClient } from "@/lib/supabase/client";
@@ -268,6 +268,8 @@ function LeadsContent() {
             createdAt: l.created_at,
             tags: l.tags || [],
             qualificationReasoning: l.reasoning || '',
+            region: l.region || '',
+            niche: l.niche || '',
           };
         }));
       }
