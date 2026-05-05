@@ -56,8 +56,8 @@ export async function launchCampaignWorkflow(campaignId: string, workspaceId: st
     console.log(`[Action] Launching workflow for campaign: ${campaignId}`);
     
     // 2. Start the orchestrator 
-    // We do NOT await the full workflow here to avoid server action timeouts.
-    // The orchestrator handles its own state updates in the DB, which the UI polls for.
+    // Note: We don't await the full result, but we do trigger the async process.
+    // In a serverless env like Vercel, it's safer to await the trigger if it returns a promise.
     void workflowOrchestrator.startWorkflow(campaignId, workspaceId);
 
     revalidatePath(`/app/campaigns/${campaignId}`);

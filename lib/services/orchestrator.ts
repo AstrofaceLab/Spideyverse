@@ -26,8 +26,12 @@ export class WorkflowOrchestrator {
       .select()
       .single();
 
-    if (runError) throw runError;
+    if (runError) {
+      console.error('[Orchestrator] Failed to initialize workflow run:', runError);
+      throw runError;
+    }
     
+    console.log(`[Orchestrator] Run initialized: ${run.id}. Launching agents...`);
     await this.logActivity(workspaceId, campaignId, run.id, 'manager', 'Workflow initialized. Launching Spideyverse Engine...');
 
     try {
@@ -142,12 +146,14 @@ export class WorkflowOrchestrator {
 
     } catch (error: any) {
       console.error('[Orchestrator] Critical Failure:', error);
-      await this.supabase.from('workflow_runs').update({ 
-        status: 'failed', 
-        error_message: error.message,
-        failed_at: new Date().toISOString() 
-      }).eq('id', run.id);
-      await this.logActivity(workspaceId, campaignId, run.id, 'manager', `Workflow failed: ${error.message}`, 'error');
+      if (run?.id) {
+        await this.supabase.from('workflow_runs').update({ 
+          status: 'failed', 
+          error_message: error.message,
+          failed_at: new Date().toISOString() 
+        }).eq('id', run.id);
+        await this.logActivity(workspaceId, campaignId, run.id, 'manager', `Workflow failed: ${error.message}`, 'error');
+      }
     }
   }
 
@@ -202,5 +208,3 @@ export class WorkflowOrchestrator {
 }
 
 export const workflowOrchestrator = new WorkflowOrchestrator();
-
-

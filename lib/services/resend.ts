@@ -60,10 +60,9 @@ if (!resendApiKey) {
     'emails will be logged but not delivered. Set this key to enable real sending.'
   );
 } else if (!process.env.RESEND_FROM_EMAIL) {
-  throw new Error(
-    '[Config] Missing required environment variable: "RESEND_FROM_EMAIL". ' +
-    'This must be a Resend-verified sender email (e.g. outreach@yourdomain.com). ' +
-    'Check your .env.local file and deployment environment settings.'
+  console.warn(
+    '[Config] RESEND_FROM_EMAIL is not set. ResendService will run in MOCK MODE. ' +
+    'This must be a Resend-verified sender email to enable real sending.'
   );
 }
 
