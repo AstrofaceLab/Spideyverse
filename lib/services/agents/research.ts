@@ -58,7 +58,7 @@ export class ResearchAgent {
         summary: `Apollo verified ${p.title} at ${p.organization?.name}. Located in ${p.city}, ${p.state}.`,
         qualification_status: 'new',
         tags: [p.organization?.industry || 'B2B'],
-        score: 80, // Pre-scored higher because it's from a verified B2B source
+        score: 80, 
       }));
     } catch (err: any) {
       console.error(`[ResearchAgent] Apollo stage failed:`, err.message);
@@ -68,65 +68,78 @@ export class ResearchAgent {
 
   /**
    * Step 2b: Serper Search execution (Web-scale Discovery)
+   * 🚀 Optimized: Parallelized Search
    */
   async executeSearch(queries: string[]): Promise<any[]> {
-    const allResults = [];
-    console.log(`[ResearchAgent] Starting search for ${queries.length} queries`);
-    for (const query of queries) {
-      try {
-        const results = await serperService.search(query, 12);
-        console.log(`[ResearchAgent] Query "${query}" returned ${results.length} results`);
-        allResults.push(...results);
-      } catch (err: any) {
-        console.error(`[ResearchAgent] Query failed: ${query}`, err.message);
-      }
+    console.log(`[ResearchAgent] Starting parallel search for ${queries.length} queries`);
+    
+    // Process in chunks to avoid rate limits while keeping speed
+    const CHUNK_SIZE = 3;
+    const allResults: any[] = [];
+    
+    for (let i = 0; i < queries.length; i += CHUNK_SIZE) {
+      const chunk = queries.slice(i, i + CHUNK_SIZE);
+      const chunkResults = await Promise.all(chunk.map(async (query) => {
+        try {
+          return await serperService.search(query, 12);
+        } catch (err: any) {
+          console.error(`[ResearchAgent] Query failed: ${query}`, err.message);
+          return [];
+        }
+      }));
+      allResults.push(...chunkResults.flat());
     }
+
     console.log(`[ResearchAgent] Total results found: ${allResults.length}`);
     return allResults;
   }
 
   /**
    * Step 3: Scraping & Extraction
+   * 🚀 Optimized: Batch processing with concurrency control
    */
   async extractLeads(searchResults: any[], campaignId: string, workspaceId: string): Promise<{ leads: any[], scannedCount: number }> {
-    const rawLeads = [];
+    const rawLeads: any[] = [];
     const processedUrls = new Set<string>();
     let scannedCount = 0;
 
-    console.log(`[ResearchAgent] Extracting leads from ${searchResults.length} results`);
+    console.log(`[ResearchAgent] Extracting leads from ${searchResults.length} results using batch processing`);
 
-    for (const result of searchResults) {
-      if (processedUrls.has(result.link)) continue;
-      processedUrls.add(result.link);
-      scannedCount++;
+    // Limit to top 30 results for speed in this phase
+    const targets = searchResults.slice(0, 30);
+    
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < targets.length; i += BATCH_SIZE) {
+      const batch = targets.slice(i, i + BATCH_SIZE);
       
-      if (rawLeads.length >= 50) {
-        console.log(`[ResearchAgent] Reached raw lead limit (50)`);
-        break; // Limit raw pool
-      }
-
-      console.log(`[ResearchAgent] Processing URL (${scannedCount}/${searchResults.length}): ${result.link}`);
-      const extracted = await dataExtractor.processUrl(result.link);
-      if (extracted) {
-        console.log(`[ResearchAgent] Successfully extracted: ${extracted.company_name}`);
-        rawLeads.push({
-          campaign_id: campaignId,
-          workspace_id: workspaceId,
-          company_name: extracted.company_name || result.title.split('-')[0].trim(),
-          company_website: extracted.website || result.link,
-          contact_name: extracted.contact_name || null,
-          contact_role: extracted.role || null, // Map 'role' to 'contact_role'
-          email: extracted.email || null,
-          source: 'serper',
-          summary: extracted.summary || result.snippet,
-          qualification_status: 'new',
-          tags: extracted.industry_hint ? [extracted.industry_hint] : [],
-          score: null,
-        });
-      } else {
-        console.log(`[ResearchAgent] Extraction failed for ${result.link}, using fallback.`);
-        // Fallback to basic info from search result
-        rawLeads.push({
+      const results = await Promise.all(batch.map(async (result) => {
+        if (processedUrls.has(result.link)) return null;
+        processedUrls.add(result.link);
+        
+        try {
+          const extracted = await dataExtractor.processUrl(result.link);
+          if (extracted) {
+            return {
+              campaign_id: campaignId,
+              workspace_id: workspaceId,
+              company_name: extracted.company_name || result.title.split('-')[0].trim(),
+              company_website: extracted.website || result.link,
+              contact_name: extracted.contact_name || null,
+              contact_role: extracted.role || null,
+              email: extracted.email || null,
+              source: 'serper',
+              summary: extracted.summary || result.snippet,
+              qualification_status: 'new',
+              tags: extracted.industry_hint ? [extracted.industry_hint] : [],
+              score: null,
+            };
+          }
+        } catch (err) {
+          console.warn(`[ResearchAgent] Extraction failed for ${result.link}`);
+        }
+        
+        // Fallback for failed extraction but found link
+        return {
           campaign_id: campaignId,
           workspace_id: workspaceId,
           company_name: result.title.split('-')[0].trim(),
@@ -136,9 +149,16 @@ export class ResearchAgent {
           qualification_status: 'new',
           tags: [],
           score: null,
-        });
-      }
+        };
+      }));
+
+      const validResults = results.filter(r => r !== null);
+      rawLeads.push(...validResults);
+      scannedCount += batch.length;
+      
+      if (rawLeads.length >= 40) break;
     }
+
     console.log(`[ResearchAgent] Extraction complete. Generated ${rawLeads.length} raw leads.`);
     return { leads: rawLeads, scannedCount };
   }
@@ -151,15 +171,19 @@ export class ResearchAgent {
     const batchUnique = this.deduplicateLeads(rawLeads);
     const finalLeads = [];
     
-    // Global DB Check (Simplified for performance in this demo/phase)
+    // Global DB Check (Optimized batch check)
+    const websites = batchUnique.map(l => l.company_website);
+    const { data: existing } = await this.supabase
+      .from('leads')
+      .select('company_website')
+      .in('company_website', websites);
+    
+    const existingWebsites = new Set(existing?.map(e => e.company_website) || []);
+    
     for (const lead of batchUnique) {
-      const { data: exists } = await this.supabase
-        .from('leads')
-        .select('id')
-        .eq('company_website', lead.company_website)
-        .maybeSingle();
-      
-      if (!exists) finalLeads.push(lead);
+      if (!existingWebsites.has(lead.company_website)) {
+        finalLeads.push(lead);
+      }
     }
 
     if (finalLeads.length > 0) {

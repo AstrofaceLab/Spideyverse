@@ -146,13 +146,18 @@ export class WorkflowOrchestrator {
 
     } catch (error: any) {
       console.error('[Orchestrator] Critical Failure:', error);
-      if (run?.id) {
-        await this.supabase.from('workflow_runs').update({ 
-          status: 'failed', 
-          error_message: error.message,
-          failed_at: new Date().toISOString() 
-        }).eq('id', run.id);
-        await this.logActivity(workspaceId, campaignId, run.id, 'manager', `Workflow failed: ${error.message}`, 'error');
+      try {
+        const runId = run?.id;
+        if (runId) {
+          await this.supabase.from('workflow_runs').update({ 
+            status: 'failed', 
+            error_message: error.message || 'Unknown orchestrator error',
+            failed_at: new Date().toISOString() 
+          }).eq('id', runId);
+          await this.logActivity(workspaceId, campaignId, runId, 'manager', `Workflow failed: ${error.message}`, 'error');
+        }
+      } catch (innerError) {
+        console.error('[Orchestrator] Secondary failure in error handler:', innerError);
       }
     }
   }

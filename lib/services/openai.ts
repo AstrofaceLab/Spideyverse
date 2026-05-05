@@ -28,6 +28,8 @@ export class OpenAIService {
             { role: 'user', content: params.userPrompt },
           ],
           response_format: { type: 'json_object' },
+        }, {
+          timeout: 25000, // 🚀 25 second hard timeout to prevent hanging
         });
 
         const content = response.choices[0].message.content;
@@ -36,13 +38,17 @@ export class OpenAIService {
         return JSON.parse(content) as T;
       } catch (error: any) {
         lastError = error;
-        if (error?.status === 429 || error?.status >= 500) {
-          console.warn(`[OpenAI] Transient error (${error.status}). Retrying... (${retries} left)`);
+        
+        // Handle Rate Limits and Server Errors
+        if (error?.status === 429 || error?.status >= 500 || error.name === 'APITimeoutError') {
+          console.warn(`[OpenAI] Transient error (${error.name || error.status}). Retrying... (${retries - 1} left)`);
           retries--;
-          await new Promise(resolve => setTimeout(resolve, 2000 * (3 - retries))); // Exponential backoff
-          continue;
+          if (retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000 * (3 - retries))); 
+            continue;
+          }
         }
-        throw error; // Non-transient error
+        throw error; 
       }
     }
 
