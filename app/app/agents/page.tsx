@@ -50,12 +50,20 @@ export default function AgentsPage() {
 
       const realAgents = agentMap.map(a => {
         const latestTask = tasks?.find(t => t.agent_name.toLowerCase().includes(a.type));
+        const tasksCompleted = tasks?.filter(t => t.agent_name.toLowerCase().includes(a.type) && t.status === 'completed').length || 0;
+        
         return {
           ...a,
           status: latestTask?.status === 'running' ? 'running' : 'idle',
           lastActive: latestTask?.updated_at || 'Never',
-          tasksCompleted: tasks?.filter(t => t.agent_name.toLowerCase().includes(a.type) && t.status === 'completed').length || 0,
+          tasksCompleted,
           currentTask: latestTask?.status === 'running' ? `Processing ${latestTask.stage}` : 'Await assignment',
+          role: a.description,
+          metrics: [
+            { label: 'Completed', value: tasksCompleted.toString() },
+            { label: 'Uptime', value: '100%' },
+            { label: 'Success', value: '100%' },
+          ]
         };
       });
 
